@@ -1,7 +1,7 @@
 CHANGELOG
 =========
 
-1.1.0 (XX.XX.2025) +20 Commits +20 Translations
+1.1.0 (XX.XX.2025) +130 Commits +50 Translations
 ------------------
 
 ### Function
@@ -10,15 +10,56 @@ CHANGELOG
 - Add: Preference to enable Index-V2
 - Add: Ktor ContentEncoding client plugin
 - Add: Repositories interface for better domain management logic
+- Add: Insert repository categories & anti-features to database (index-v2)
+- Add: Support index-v2's webBaseUrl for the respective repos
+- Add: Support for OEM/ROM-preset repositories
+- Add: Mirror rotation support for repo sync and apk downloads
+- Add: Preference for maximal number of idle connections
+- Add: Install tasks restarter on running the activity
+- Add: Retries and backoff for InstallWorker
+- Fix: Selected releases order of EmbeddedProducts
+- Fix: Crashes on update where some releases, tasks or downloads stuck in the database
+- Update: Revamp InstallWorker improving its failure handling
+- Update: Refactor BaseInstaller to use InstallQueue and InstallStateHolder providing common logic for all installers
+- Update: Revamp all installers improving their robustness
+- Update: Simplify startUpdate() logic
+- Update: Revamp Product and its DAO to v2
+- Update: Improve the main products' query (should provide a big performance boost)
 - Update: Fit icon and screenshot uri generators to fit the new logic
 - Update: Keep name and description if updated repo lack values
 - Update: Make main non-flow Dao functions suspend
-- Remove: Libretro repository
+- Update: Store full signing history in Installed
+- Update: Migrate logics of App page into its VM
+- Update: Improve developer's other apps' query logic
+- Update: Replace Screenshot items with their paths
+- Update: Revamp the privacy-processor to handle repo anti-features (index-v2)
+- Update: Revamp database instance creator call
+- Update: Run restart on theme change in a main coroutine
+- Update: Enable R8's full mode
+- Update: Enlarge download buffer size
+- Update: Make stateflows flow only while subscribed
+- Update: Clean most DAOs logics
+- Update: Simplify coil call handler logic and caching
+- Remove: Preference for number of searched apps
+- Remove repository: Frostnerd, Frostnerd-archive and Libretro
+- TargetSDK 35
+- CompileSDK 36
 
 ### UI/UX
 
+- Add: Baklava android version name
+- Add: Clear positive action on permission cards
 - Fix: Missing buffer on the bottom of the repos list
+- Fix: Respect set app language first, then system when parsing localized index values
+- Fix: Double v's in the version name chip in app page
 - Update: Revamp selection chips layout
+- Update: Show localized categories and anti-features (index-v2)
+- Update: Revamp search bar layout
+- Update: Revamp search page bar layout
+- Update: Revamp updates' card layout
+- Update: Revamp ActionButton layout
+- Update: Use double carets for expandable cards
+- Update: Revamp repository page layout
 
 1.0.9 (07.04.2025) +20 Commits +20 Translations
 ------------------

@@ -182,6 +182,23 @@ interface ProductDao : BaseDao<Product> {
         // From & Joining
         builder += """
         FROM $TABLE_PRODUCT
+        JOIN (
+            SELECT p2.$ROW_PACKAGE_NAME,
+                   p2.$ROW_REPOSITORY_ID,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY p2.$ROW_PACKAGE_NAME 
+                       ORDER BY COALESCE(
+                           (SELECT MAX(rel.$ROW_VERSION_CODE) 
+                            FROM $TABLE_RELEASE rel 
+                            WHERE rel.$ROW_PACKAGE_NAME = p2.$ROW_PACKAGE_NAME 
+                            AND rel.$ROW_REPOSITORY_ID = p2.$ROW_REPOSITORY_ID), 
+                           0
+                       ) DESC
+                   ) as rn
+            FROM $TABLE_PRODUCT p2
+        ) ranked_products ON $TABLE_PRODUCT.$ROW_PACKAGE_NAME = ranked_products.$ROW_PACKAGE_NAME 
+                          AND $TABLE_PRODUCT.$ROW_REPOSITORY_ID = ranked_products.$ROW_REPOSITORY_ID
+                          AND ranked_products.rn = 1
         JOIN $TABLE_REPOSITORY ON $TABLE_PRODUCT.$ROW_REPOSITORY_ID = $TABLE_REPOSITORY.$ROW_ID
         LEFT JOIN $TABLE_EXTRAS ON $TABLE_PRODUCT.$ROW_PACKAGE_NAME = $TABLE_EXTRAS.$ROW_PACKAGE_NAME
         ${if (!installed && !updates) "LEFT " else ""}JOIN $TABLE_INSTALLED ON $TABLE_PRODUCT.$ROW_PACKAGE_NAME = $TABLE_INSTALLED.$ROW_PACKAGE_NAME
@@ -232,7 +249,7 @@ interface ProductDao : BaseDao<Product> {
                 whereConditions.add("$TABLE_PRODUCT.$ROW_ADDED = $TABLE_PRODUCT.$ROW_UPDATED")
                 whereConditions.add(
                     """
-                (SELECT COUNT(*) 
+                (SELECT COUNT(DISTINCT $TABLE_RELEASE.$ROW_VERSION_CODE) 
                 FROM $TABLE_RELEASE 
                 WHERE $TABLE_RELEASE.$ROW_PACKAGE_NAME = $TABLE_PRODUCT.$ROW_PACKAGE_NAME) = 1
                 """.trimIndent()

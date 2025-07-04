@@ -5,7 +5,6 @@ import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.net.Uri
 import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
@@ -29,10 +28,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.app.ActivityCompat.startActivityForResult
+import androidx.core.net.toUri
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
-import androidx.navigation.NavHostController
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.PermissionState
 import com.google.accompanist.permissions.isGranted
@@ -51,7 +50,7 @@ import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalPermissionsApi::class)
 @Composable
-fun PermissionsPage(navController: NavHostController) {
+fun PermissionsPage(navigator: (NavRoute) -> Unit) {
     val context = LocalContext.current
     val activity = LocalActivity.current as NeoActivity
     val mScope = CoroutineScope(Dispatchers.Main)
@@ -74,7 +73,7 @@ fun PermissionsPage(navController: NavHostController) {
                     powerManager,
                     permissionStatePostNotifications,
                 ) {
-                    mScope.launch { navController.navigate(NavRoute.Main()) }
+                    mScope.launch { navigator(NavRoute.Main()) }
                 }
             }
         }
@@ -105,7 +104,7 @@ fun PermissionsPage(navController: NavHostController) {
                         powerManager,
                         permissionStatePostNotifications,
                     ) {
-                        mScope.launch { navController.navigate(NavRoute.Main()) }
+                        mScope.launch { navigator(NavRoute.Main()) }
                     }
                 }
             }
@@ -140,7 +139,7 @@ fun SnapshotStateList<Pair<Permission, () -> Unit>>.refresh(
             add(Pair(Permission.InstallPackages) {
                 val intent = Intent(
                     Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
-                    Uri.parse("package:" + context.packageName)
+                    "package:${context.packageName}".toUri()
                 )
                 startActivityForResult(context as Activity, intent, 71662, null)
             })

@@ -8,10 +8,10 @@ import androidx.core.content.ContextCompat
 import androidx.core.database.getIntOrNull
 import androidx.core.database.getLongOrNull
 import androidx.core.net.toUri
+import com.machiav3lli.fdroid.BUFFER_SIZE
 import com.machiav3lli.fdroid.CLIENT_CONNECT_TIMEOUT_MS
 import com.machiav3lli.fdroid.CLIENT_USER_AGENT
 import com.machiav3lli.fdroid.POOL_DEFAULT_KEEP_ALIVE_DURATION_M
-import com.machiav3lli.fdroid.POOL_DEFAULT_MAX_IDLE_CONNECTIONS
 import com.machiav3lli.fdroid.data.content.Preferences
 import com.machiav3lli.fdroid.data.entity.DownloadTask
 import com.machiav3lli.fdroid.utils.dmReasonToHttpResponse
@@ -169,7 +169,7 @@ object Downloader {
                             channel.use { input ->
                                 val outputStream = FileOutputStream(target, append)
                                 outputStream.use { output ->
-                                    input.copyTo(output)
+                                    input.copyTo(output, BUFFER_SIZE)
                                     output.fd.sync()
                                 }
                             }
@@ -315,7 +315,7 @@ private fun initDownloadClient(): HttpClient = HttpClient(OkHttp) {
         config {
             connectionPool(
                 ConnectionPool(
-                    POOL_DEFAULT_MAX_IDLE_CONNECTIONS,
+                    Preferences[Preferences.Key.MaxIdleConnections],
                     POOL_DEFAULT_KEEP_ALIVE_DURATION_M,
                     TimeUnit.MINUTES
                 )

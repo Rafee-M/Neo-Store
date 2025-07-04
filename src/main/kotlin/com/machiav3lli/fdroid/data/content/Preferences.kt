@@ -16,6 +16,7 @@ import com.machiav3lli.fdroid.data.entity.Order
 import com.machiav3lli.fdroid.utils.extension.android.Android
 import com.machiav3lli.fdroid.utils.getHasSystemInstallPermission
 import com.machiav3lli.fdroid.utils.isBiometricLockAvailable
+import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -30,48 +31,56 @@ data object Preferences : OnSharedPreferenceChangeListener {
     val subject = mutableSubject.asSharedFlow()
 
     private val keys = sequenceOf(
+        // Personalization
         Key.Language,
-        Key.AutoSync,
-        Key.AutoSyncInterval,
-        Key.IndexV2,
-        Key.ReleasesCacheRetention,
-        Key.DownloadDirectory,
-        Key.DownloadManager,
+        Key.Theme,
+        Key.DefaultTab,
+        Key.KidsMode,
         Key.DownloadShowDialog,
         Key.ActionLockDialog,
-        Key.EnableDownloadDirectory,
-        Key.ImagesCacheRetention,
-        Key.InstallAfterSync,
-        Key.IncompatibleVersions,
-        Key.DisableSignatureCheck,
-        Key.ShowScreenshots,
-        Key.ShowTrackers,
+        Key.UpdatedApps,
+        Key.NewApps,
+        // Layout
+        Key.AltBlockLayout,
         Key.AltNavBarItem,
         Key.AltNewApps,
         Key.HideNewApps,
-        Key.AltBlockLayout,
-        Key.AndroidInsteadOfSDK,
         Key.BottomSearchBar,
-        Key.SearchApps,
-        Key.UpdatedApps,
-        Key.NewApps,
-        Key.DisableCertificateValidation,
-        Key.ProxyUrl,
-        Key.ProxyHost,
-        Key.ProxyPort,
-        Key.ProxyType,
+        Key.ShowScreenshots,
+        Key.ShowTrackers,
+        Key.AndroidInsteadOfSDK,
+        // Cache
+        Key.EnableDownloadDirectory,
+        Key.DownloadDirectory,
+        Key.ReleasesCacheRetention,
+        Key.ImagesCacheRetention,
+        // Sync
+        Key.AutoSync,
+        Key.AutoSyncInterval,
+        Key.InstallAfterSync,
+        Key.IndexV2,
+        // Updates
+        Key.DownloadManager,
+        Key.UpdateNotify,
+        Key.UpdateUnstable,
+        Key.IncompatibleVersions,
+        Key.DisableDownloadVersionCheck,
+        Key.DisableSignatureCheck,
+        Key.RBProvider,
+        // Installation
+        Key.KeepInstallNotification,
         Key.Installer,
         Key.RootSessionInstaller,
         Key.RootAllowDowngrades,
         Key.RootAllowInstallingOldApps,
-        Key.Theme,
-        Key.DefaultTab,
-        Key.UpdateNotify,
-        Key.KeepInstallNotification,
-        Key.DisableDownloadVersionCheck,
-        Key.UpdateUnstable,
-        Key.KidsMode,
-        // sort & filter
+        // Internet
+        Key.DisableCertificateValidation,
+        Key.MaxIdleConnections,
+        Key.ProxyType,
+        Key.ProxyUrl,
+        Key.ProxyHost,
+        Key.ProxyPort,
+        // Sort & Filter
         Key.SortOrderExplore,
         Key.SortOrderLatest,
         Key.SortOrderInstalled,
@@ -108,6 +117,8 @@ data object Preferences : OnSharedPreferenceChangeListener {
         Key.InitialSync,
         Key.IgnoreDisableBatteryOptimization,
         Key.IgnoreShowNotifications,
+        Key.TrackersLastModified,
+        Key.RBLogsLastModified,
     ).map { Pair(it.name, it) }.toMap()
 
     fun init(context: Context) {
@@ -270,7 +281,7 @@ data object Preferences : OnSharedPreferenceChangeListener {
         data object EnableDownloadDirectory :
             Key<Boolean>("download_directory_enable", Value.BooleanValue(false))
 
-        data object IndexV2 : Key<Boolean>("index_v2", Value.BooleanValue(false))
+        data object IndexV2 : Key<Boolean>("index_v2", Value.BooleanValue(true))
 
         data object DownloadManager :
             Key<Boolean>("download_manager", Value.BooleanValue(true))
@@ -308,6 +319,12 @@ data object Preferences : OnSharedPreferenceChangeListener {
         data object DisableSignatureCheck :
             Key<Boolean>("disable_signature_check", Value.BooleanValue(false))
 
+        data object RBProvider : Key<Preferences.RBProvider>(
+            "rb_provider", Value.EnumerationValue(
+                Preferences.RBProvider.IzzyOnDroid
+            )
+        )
+
         data object ShowScreenshots :
             Key<Boolean>("show_screenshots", Value.BooleanValue(true))
 
@@ -323,8 +340,9 @@ data object Preferences : OnSharedPreferenceChangeListener {
         data object BottomSearchBar : Key<Boolean>("bottom_search_bar", Value.BooleanValue(false))
 
         data object UpdatedApps : Key<Int>("updated_apps", Value.IntValue(150))
-        data object SearchApps : Key<Int>("search_apps_num", Value.IntValue(0))
         data object NewApps : Key<Int>("new_apps", Value.IntValue(30))
+
+        data object MaxIdleConnections : Key<Int>("max_num_idle_connections", Value.IntValue(10))
 
         data object DisableCertificateValidation :
             Key<Boolean>("disable_certificate_validation", Value.BooleanValue(false))
@@ -542,6 +560,12 @@ data object Preferences : OnSharedPreferenceChangeListener {
 
         data object LastManualSyncTime :
             Key<Long>("last_manual_sync_time", Value.LongValue(0L))
+
+        data object RBLogsLastModified :
+            Key<String>("last_modified_rblogs", Value.StringValue(""))
+
+        data object TrackersLastModified :
+            Key<String>("last_modified_trackers", Value.StringValue(""))
     }
 
     sealed class AutoSync(override val valueString: String) : Enumeration<AutoSync> {
@@ -746,6 +770,37 @@ data object Preferences : OnSharedPreferenceChangeListener {
         data object Explore : DefaultTab("1")
         data object Search : DefaultTab("2")
         data object Installed : DefaultTab("3")
+    }
+
+    sealed class RBProvider(override val valueString: String) : Enumeration<RBProvider> {
+        override val values: List<RBProvider>
+            get() = persistentListOf(
+                None,
+                IzzyOnDroid,
+                BG443,
+            )
+
+        abstract val url: String
+
+        data object None : RBProvider("none") {
+            override val url: String
+                get() = ""
+        }
+
+        data object IzzyOnDroid : RBProvider("iod") {
+            override val url: String
+                get() = "https://codeberg.org/IzzyOnDroid/rbtlog/raw/branch/izzy/log"
+        }
+
+        data object BG443 : RBProvider("bg443") {
+            override val url: String
+                get() = "https://codeberg.org/bg443/rbtlog/raw/branch/master"
+        }
+
+        data object OBFUSK : RBProvider("obfusk") {
+            override val url: String
+                get() = "https://codeberg.org/obfusk/rbtlog/raw/branch/log"
+        }
     }
 
     operator fun <T> get(key: Key<T>): T {

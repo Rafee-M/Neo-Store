@@ -22,6 +22,7 @@ import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.biometric.BiometricManager
 import androidx.core.app.ActivityCompat
+import androidx.core.net.toUri
 import androidx.fragment.app.FragmentManager
 import com.machiav3lli.fdroid.AM_PACKAGENAME
 import com.machiav3lli.fdroid.AM_PACKAGENAME_DEBUG
@@ -54,8 +55,6 @@ import com.machiav3lli.fdroid.utils.extension.text.hex
 import com.machiav3lli.fdroid.utils.extension.text.nullIfEmpty
 import com.topjohnwu.superuser.Shell
 import io.ktor.http.HttpStatusCode
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.update
 import java.security.MessageDigest
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -79,38 +78,64 @@ object Utils {
             .hex()
     }
 
-    suspend fun startUpdate(
+    fun calculateSHA256(hexadecString: String): String {
+        return MessageDigest.getInstance("SHA-256")
+            .digest(
+                hexadecString
+                    .chunked(2)
+                    .mapNotNull { byteStr ->
+                        try {
+                            byteStr.toInt(16).toByte()
+                        } catch (_: NumberFormatException) {
+                            null
+                        }
+                    }
+                    .toByteArray()
+            ).hex()
+    }
+
+    fun startUpdate(
         packageName: String,
         installed: Installed?,
         products: List<Pair<EmbeddedProduct, Repository>>,
     ) {
         val productRepository = findSuggestedProduct(products, installed) { it.first }
-        val compatibleReleases = productRepository?.first?.selectedReleases.orEmpty()
+        val selectedRelease = getCompatibleReleases(productRepository, installed)
+            .getBestRelease()
+
+        if (productRepository != null && selectedRelease != null) {
+            DownloadWorker.enqueue(
+                packageName,
+                productRepository.first.product.label,
+                productRepository.second,
+                selectedRelease,
+            )
+        }
+    }
+
+    private fun getCompatibleReleases(
+        productRepository: Pair<EmbeddedProduct, Repository>?,
+        installed: Installed?
+    ): List<Release> {
+        val includeIncompatible = Preferences[Preferences.Key.IncompatibleVersions]
+
+        return productRepository?.first?.releases.orEmpty()
+            .filter { includeIncompatible || it.incompatibilities.isEmpty() }
             .filter {
                 installed == null ||
                         it.signature in installed.signatures ||
                         Preferences[Preferences.Key.DisableSignatureCheck]
             }
-        val releaseFlow = MutableStateFlow(compatibleReleases.firstOrNull())
-        if (compatibleReleases.size > 1) {
-            releaseFlow.update {
-                compatibleReleases
-                    .filter { it.platforms.contains(Android.primaryPlatform) }
-                    .minByOrNull { it.platforms.size }
-                    ?: compatibleReleases.minByOrNull { it.platforms.size }
-                    ?: compatibleReleases.firstOrNull()
-            }
-        }
-        releaseFlow.collect {
-            if (productRepository != null && it != null) {
-                DownloadWorker.enqueue(
-                    packageName,
-                    productRepository.first.product.label,
-                    productRepository.second,
-                    it,
-                )
-            }
-        }
+            .sortedByDescending { it.versionCode }
+    }
+
+    private fun List<Release>.getBestRelease(): Release? {
+        if (isEmpty()) return null
+        if (size == 1) return first()
+
+        return filter { it.platforms.contains(Android.primaryPlatform) }
+            .minByOrNull { it.platforms.size }
+            ?: maxByOrNull { it.platforms.size }
     }
 
     fun Context.setLanguage(): Configuration {
@@ -185,6 +210,7 @@ fun <T> findSuggestedProduct(
 ): T? {
     return products.maxWithOrNull(
         compareBy(
+            { extract(it).versionCode },
             {
                 extract(it).compatible && (
                         installed == null ||
@@ -193,7 +219,6 @@ fun <T> findSuggestedProduct(
                                 Preferences[Preferences.Key.DisableSignatureCheck]
                         )
             },
-            { extract(it).versionCode },
         )
     )
 }
@@ -262,7 +287,7 @@ fun Context.showBatteryOptimizationDialog() {
         .setMessage(R.string.ignore_battery_optimization_message)
         .setPositiveButton(R.string.dialog_approve) { _, _ ->
             val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
-            intent.data = Uri.parse("package:" + this.packageName)
+            intent.data = ("package:" + this.packageName).toUri()
             try {
                 startActivity(intent)
             } catch (e: ActivityNotFoundException) {
@@ -324,7 +349,7 @@ fun Context.shareIntent(packageName: String, appName: String, repoWebUrl: String
     val shareIntent = Intent(Intent.ACTION_SEND)
     val extraText = when {
         repoWebUrl.isNotBlank()
-            -> "$repoWebUrl$packageName"
+            -> "${repoWebUrl.trimEnd('/')}/$packageName"
 
         else
             -> "https://f-droid.org/packages/${packageName}/"
@@ -375,7 +400,7 @@ fun Product.generateLinks(context: Context): List<LinkType> {
             LinkType(
                 icon = Phosphor.User,
                 title = author.name,
-                link = author.web.nullIfEmpty()?.let(Uri::parse)
+                link = author.web.nullIfEmpty()?.let(String::toUri)
             )
         )
     }
@@ -384,7 +409,7 @@ fun Product.generateLinks(context: Context): List<LinkType> {
             LinkType(
                 Phosphor.At,
                 context.getString(R.string.author_email),
-                Uri.parse("mailto:$it")
+                "mailto:$it".toUri()
             )
         )
     }
@@ -392,7 +417,7 @@ fun Product.generateLinks(context: Context): List<LinkType> {
         LinkType(
             Phosphor.Copyleft,
             it,
-            Uri.parse("https://spdx.org/licenses/$it.html")
+            "https://spdx.org/licenses/$it.html".toUri()
         )
     })
     tracker.nullIfEmpty()
@@ -401,7 +426,7 @@ fun Product.generateLinks(context: Context): List<LinkType> {
                 LinkType(
                     Phosphor.Bug,
                     context.getString(R.string.bug_tracker),
-                    Uri.parse(it)
+                    it.toUri()
                 )
             )
         }
@@ -410,7 +435,7 @@ fun Product.generateLinks(context: Context): List<LinkType> {
             LinkType(
                 Phosphor.ArrowsClockwise,
                 context.getString(R.string.changelog),
-                Uri.parse(it)
+                it.toUri()
             )
         )
     }
@@ -420,7 +445,7 @@ fun Product.generateLinks(context: Context): List<LinkType> {
                 LinkType(
                     Phosphor.GlobeSimple,
                     context.getString(R.string.project_website),
-                    Uri.parse(it)
+                    it.toUri()
                 )
             )
         }

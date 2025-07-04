@@ -188,7 +188,7 @@
     <string name="explore">استكشف</string>
     <string name="update_all">تثبيت الكل</string>
     <string name="install_after_sync_summary">تثبيت جميع الإصدارات الجديدة بعد البحث في المستودعات للتطبيقات الجديدة.</string>
-    <string name="prefs_updated_apps">عدد التطبيقات المراد عرضها في \"تم التحديث مؤخرًا\\</string>
+    <string name="prefs_updated_apps">عدد التطبيقات المراد عرضها في \"تم التحديث مؤخرًا\"</string>
     <string name="new_repository">مستودع جديد</string>
     <string name="default_tab">التبويب الافتراضي</string>
     <string name="pending">قيد الانتظار</string>
@@ -430,4 +430,9 @@
     <string name="installing_error_blocked_DESC">تم حظر التثبيت.</string>
     <string name="installing_error_unknown_DESC">خطأ غير معروف أثناء التثبيت.</string>
     <string name="initial_sync_repositories">هل تريد مزامنة المستودعات المحددة مسبقًا (مشروع F - Droid الرسمي و IzzyOnDroid و Guardian )؟</string>
+    <string name="index_v2">تمكين الفهرس-V2</string>
+    <string name="index_v2_summary">تمكين طلب الفهرس V2 كمؤشر أساسي. لا يزال تجريبيًا، وله مزايا وعيوب.</string>
+    <string name="action_start">هيا بنا!</string>
+    <string name="mirror_rotation">تدوير المرايا</string>
+    <string name="max_idle_connections_description">الحد الأقصى لعدد الاتصالات الخاملة عبر جميع العناوين التي سيتم الاحتفاظ بها نشطة.</string>
 </resources>

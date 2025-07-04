@@ -9,6 +9,9 @@ import android.util.Log
 import androidx.annotation.RequiresApi
 import androidx.core.app.NotificationManagerCompat
 import androidx.work.Data
+import androidx.work.ExistingWorkPolicy
+import androidx.work.NetworkType
+import androidx.work.OneTimeWorkRequest
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import androidx.work.WorkQuery
@@ -21,8 +24,9 @@ import com.machiav3lli.fdroid.NOTIFICATION_CHANNEL_UPDATES
 import com.machiav3lli.fdroid.NOTIFICATION_CHANNEL_VULNS
 import com.machiav3lli.fdroid.NeoApp
 import com.machiav3lli.fdroid.R
+import com.machiav3lli.fdroid.TAG_BATCH_SYNC_PERIODIC
 import com.machiav3lli.fdroid.TAG_SYNC_ONETIME
-import com.machiav3lli.fdroid.data.database.entity.InstallTask
+import com.machiav3lli.fdroid.data.content.Preferences
 import com.machiav3lli.fdroid.data.entity.DownloadState
 import com.machiav3lli.fdroid.data.entity.ProductItem
 import com.machiav3lli.fdroid.data.entity.SyncState
@@ -38,13 +42,10 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.collect
-import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.retryWhen
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import org.koin.core.component.KoinComponent
 import org.koin.core.component.inject
 import org.koin.dsl.module
@@ -53,7 +54,7 @@ import kotlin.coroutines.cancellation.CancellationException
 
 class WorkerManager(appContext: Context) : KoinComponent {
 
-    val workManager: WorkManager by inject()
+    private val workManager: WorkManager by inject()
     private val actionReceiver: ActionReceiver by inject()
     private var appContext: Context = appContext
     private var langContext: Context = ContextWrapperX.wrap(appContext)
@@ -62,10 +63,17 @@ class WorkerManager(appContext: Context) : KoinComponent {
     private val productRepo: ProductsRepository by inject()
     private val reposRepo: RepositoriesRepository by inject()
     private val installedRepo: InstalledRepository by inject()
+
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    val syncsScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    val downloadsScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private val downloadTracker = DownloadsTracker()
+    private val syncTracker = SyncsTracker()
+
     private val syncStateHandler by lazy {
         SyncStateHandler(
             context = langContext,
-            scope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
+            scope = syncsScope,
             syncStates = WorkStateHolder(),
             notificationManager = notificationManager
         )
@@ -73,19 +81,12 @@ class WorkerManager(appContext: Context) : KoinComponent {
     private val downloadStateHandler by lazy {
         DownloadStateHandler(
             context = langContext,
-            scope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
+            scope = downloadsScope,
             downloadStates = WorkStateHolder(),
             notificationManager = notificationManager,
             downloadedRepo = downloadedRepo,
         )
     }
-    private val installMutex = Mutex()
-
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    val syncsScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-    val downloadsScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-    private val downloadTracker = DownloadsTracker()
-    private val syncTracker = SyncsTracker()
 
     init {
         appContext.registerReceiver(actionReceiver, IntentFilter())
@@ -94,20 +95,6 @@ class WorkerManager(appContext: Context) : KoinComponent {
         workManager.pruneWork()
         setupWorkInfoCollection()
         monitorWorkProgress()
-        scope.launch {
-            combine(
-                NeoApp.db.getInstallTaskDao()
-                    .getAllFlow(),
-                workManager.getWorkInfosFlow(
-                    WorkQuery.Builder
-                        .fromTags(listOf(InstallWorker::class.java.name))
-                        .addStates(listOf(WorkInfo.State.RUNNING, WorkInfo.State.ENQUEUED))
-                        .build()
-                )
-            ) { tasks, works ->
-                enqueueTasks(tasks, works)
-            }.collect()
-        }
     }
 
     fun release(): WorkerManager? {
@@ -170,6 +157,56 @@ class WorkerManager(appContext: Context) : KoinComponent {
         }
     }
 
+    fun enqueueUniqueWork(
+        uniqueWorkName: String,
+        existingWorkPolicy: ExistingWorkPolicy,
+        request: OneTimeWorkRequest
+    ) = workManager.enqueueUniqueWork(uniqueWorkName, existingWorkPolicy, request)
+
+    internal suspend fun updatePeriodicSyncJob(force: Boolean) = withContext(Dispatchers.IO) {
+        val reschedule =
+            force || workManager.getWorkInfosForUniqueWork(TAG_BATCH_SYNC_PERIODIC).get().isEmpty()
+        if (reschedule) {
+            when (val autoSync = Preferences[Preferences.Key.AutoSync]) {
+                is Preferences.AutoSync.Never,
+                    -> {
+                    workManager.cancelUniqueWork(TAG_BATCH_SYNC_PERIODIC)
+                    Log.i(this::javaClass.name, "Canceled next auto-sync run.")
+                }
+
+                is Preferences.AutoSync.Wifi,
+                is Preferences.AutoSync.WifiBattery,
+                    -> {
+                    autoSync(
+                        connectionType = NetworkType.UNMETERED,
+                        chargingBattery = autoSync is Preferences.AutoSync.WifiBattery,
+                    )
+                }
+
+                is Preferences.AutoSync.Battery,
+                    -> autoSync(
+                    connectionType = NetworkType.CONNECTED,
+                    chargingBattery = true,
+                )
+
+                is Preferences.AutoSync.Always
+                    -> autoSync(
+                    connectionType = NetworkType.CONNECTED
+                )
+            }
+        }
+    }
+
+    private fun autoSync(
+        connectionType: NetworkType,
+        chargingBattery: Boolean = false,
+    ) {
+        BatchSyncWorker.enqueuePeriodic(
+            connectionType = connectionType,
+            chargingBattery = chargingBattery,
+        )
+    }
+
     fun cancelSyncAll() {
         SyncWorker::class.qualifiedName?.let {
             workManager.cancelAllWorkByTag(it)
@@ -220,7 +257,7 @@ class WorkerManager(appContext: Context) : KoinComponent {
     fun update(vararg product: ProductItem) = batchUpdate(product.toList(), false)
 
     private fun batchUpdate(productItems: List<ProductItem>, enforce: Boolean = false) {
-        scope.launch(Dispatchers.IO) {
+        scope.launch {
             productItems.map { productItem ->
                 Triple(
                     productItem.packageName,
@@ -233,32 +270,15 @@ class WorkerManager(appContext: Context) : KoinComponent {
                     val productRepository = productRepo.loadProduct(packageName)
                         .filter { eProduct -> eProduct.product.repositoryId == repo!!.id }
                         .map { eProduct -> Pair(eProduct, repo!!) }
-                    scope.launch(Dispatchers.IO) {
-                        Utils.startUpdate(
-                            packageName,
-                            installed,
-                            productRepository
-                        )
-                    }
+                    Utils.startUpdate(
+                        packageName,
+                        installed,
+                        productRepository
+                    )
                 }
 
         }
     }
-
-    private suspend fun enqueueTasks(tasks: List<InstallTask>, works: List<WorkInfo>) =
-        installMutex.withLock {
-            if (tasks.isEmpty() || works.isNotEmpty()) return@withLock
-            else {
-                // No InstallWorker is currently running, so we can start a new one
-                tasks.maxByOrNull { it.added }?.let {
-                    InstallWorker.Companion.enqueue(
-                        packageName = it.packageName,
-                        label = it.label,
-                        fileName = it.cacheFileName
-                    )
-                }
-            }
-        }
 
     @RequiresApi(Build.VERSION_CODES.O)
     private fun createNotificationChannels() {
@@ -288,6 +308,8 @@ class WorkerManager(appContext: Context) : KoinComponent {
     }
 
     companion object {
+        const val TAG = "WorkerManager"
+
         private fun CoroutineScope.onSyncProgress(
             manager: WorkerManager,
             workInfos: List<WorkInfo>? = null,

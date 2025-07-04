@@ -6,10 +6,8 @@ import android.content.Context
 import android.content.ContextWrapper
 import android.content.Intent
 import android.content.IntentFilter
-import android.util.Log
 import androidx.appcompat.app.AppCompatActivity
 import androidx.compose.runtime.mutableStateOf
-import androidx.work.NetworkType
 import coil3.ImageLoader
 import coil3.SingletonImageLoader
 import coil3.network.okhttp.OkHttpNetworkFetcherFactory
@@ -24,13 +22,12 @@ import com.machiav3lli.fdroid.data.entity.SyncRequest
 import com.machiav3lli.fdroid.data.index.RepositoryUpdater
 import com.machiav3lli.fdroid.data.repository.InstalledRepository
 import com.machiav3lli.fdroid.data.repository.RepositoriesRepository
-import com.machiav3lli.fdroid.manager.installer.AppInstaller
+import com.machiav3lli.fdroid.data.repository.privacyModule
 import com.machiav3lli.fdroid.manager.installer.BaseInstaller
 import com.machiav3lli.fdroid.manager.installer.installerModule
 import com.machiav3lli.fdroid.manager.network.CoilDownloader
 import com.machiav3lli.fdroid.manager.network.Downloader
 import com.machiav3lli.fdroid.manager.network.downloadClientModule
-import com.machiav3lli.fdroid.manager.network.exodusModule
 import com.machiav3lli.fdroid.manager.service.PackageChangedReceiver
 import com.machiav3lli.fdroid.manager.work.BatchSyncWorker
 import com.machiav3lli.fdroid.manager.work.WorkerManager
@@ -50,6 +47,7 @@ import org.koin.android.ext.koin.androidLogger
 import org.koin.androix.startup.KoinStartup
 import org.koin.core.annotation.KoinExperimentalAPI
 import org.koin.dsl.koinConfiguration
+import org.koin.java.KoinJavaComponent.inject
 import java.lang.ref.WeakReference
 import java.net.Proxy
 
@@ -58,19 +56,19 @@ class NeoApp : Application(), SingletonImageLoader.Factory, KoinStartup {
     val db: DatabaseX by inject()
     lateinit var mActivity: AppCompatActivity
     val wm: WorkerManager by inject()
-    val installer: AppInstaller by inject()
     val installedRepo: InstalledRepository by inject()
     val reposRepo: RepositoriesRepository by inject()
 
     companion object {
-        val enqueuedInstalls: MutableSet<String> = mutableSetOf()
         val latestSyncs: MutableMap<Long, Long> = mutableMapOf()
 
         private var appRef: WeakReference<NeoApp> = WeakReference(null)
         private val neo_store: NeoApp get() = appRef.get()!!
 
         private var mainActivityRef: WeakReference<NeoActivity> = WeakReference(null)
-        var mainActivity: NeoActivity? // TODO make private
+
+        // TODO consider remove
+        var mainActivity: NeoActivity?
             get() = mainActivityRef.get()
             set(mainActivity) {
                 mainActivityRef = WeakReference(mainActivity)
@@ -80,7 +78,7 @@ class NeoApp : Application(), SingletonImageLoader.Factory, KoinStartup {
 
         val wm: WorkerManager get() = neo_store.wm
         val db: DatabaseX get() = neo_store.db
-        val installer: BaseInstaller get() = neo_store.installer.defaultInstaller
+        val installer: BaseInstaller by inject(BaseInstaller::class.java)
 
         private val progress = mutableStateOf(Pair(false, 0f))
 
@@ -113,7 +111,7 @@ class NeoApp : Application(), SingletonImageLoader.Factory, KoinStartup {
         wm.prune()
         Cache.cleanup(this)
         ioScope.launch {
-            updatePeriodicSyncJob(false)
+            wm.updatePeriodicSyncJob(false)
         }
     }
 
@@ -122,12 +120,12 @@ class NeoApp : Application(), SingletonImageLoader.Factory, KoinStartup {
         androidLogger()
         androidContext(this@NeoApp)
         modules(
-            exodusModule,
             downloadClientModule,
             workmanagerModule,
             databaseModule,
             viewModelsModule,
             installerModule,
+            privacyModule,
         )
     }
 
@@ -179,27 +177,24 @@ class NeoApp : Application(), SingletonImageLoader.Factory, KoinStartup {
                     Preferences.Key.ProxyUrl,
                     Preferences.Key.ProxyHost,
                     Preferences.Key.ProxyPort,
-                                                   -> {
-                        updateProxy()
-                    }
+                        -> updateProxy()
 
                     Preferences.Key.AutoSync,
                     Preferences.Key.AutoSyncInterval,
-                                                   -> {
-                        updatePeriodicSyncJob(true)
-                    }
+                        -> wm.updatePeriodicSyncJob(true)
 
-                    Preferences.Key.UpdateUnstable -> {
-                        forceSyncAll()
-                    }
+                    Preferences.Key.UpdateUnstable,
+                        -> forceSyncAll()
 
-                    Preferences.Key.Theme          -> {
+                    Preferences.Key.Theme,
+                        -> {
                         launch(Dispatchers.Main) {
                             mActivity.recreate()
                         }
                     }
 
-                    Preferences.Key.Language       -> {
+                    Preferences.Key.Language,
+                        -> {
                         val refresh = Intent.makeRestartActivityTask(
                             ComponentName(
                                 baseContext,
@@ -209,57 +204,10 @@ class NeoApp : Application(), SingletonImageLoader.Factory, KoinStartup {
                         applicationContext.startActivity(refresh)
                     }
 
-                    else                           -> return@collect
+                    else -> return@collect
                 }
             }
         }
-    }
-
-    private suspend fun updatePeriodicSyncJob(force: Boolean) = withContext(Dispatchers.IO) {
-        val wm = NeoApp.wm.workManager
-        val reschedule =
-            force || wm.getWorkInfosForUniqueWork(TAG_BATCH_SYNC_PERIODIC).get().isEmpty()
-        if (reschedule) {
-            when (val autoSync = Preferences[Preferences.Key.AutoSync]) {
-                is Preferences.AutoSync.Never  -> {
-                    wm.cancelUniqueWork(TAG_BATCH_SYNC_PERIODIC)
-                    Log.i(this::javaClass.name, "Canceled next auto-sync run.")
-                }
-
-                is Preferences.AutoSync.Wifi,
-                is Preferences.AutoSync.WifiBattery,
-                                               -> {
-                    autoSync(
-                        connectionType = NetworkType.UNMETERED,
-                        chargingBattery = autoSync is Preferences.AutoSync.WifiBattery,
-                    )
-                }
-
-                is Preferences.AutoSync.Battery,
-                                               -> {
-                    autoSync(
-                        connectionType = NetworkType.CONNECTED,
-                        chargingBattery = true,
-                    )
-                }
-
-                is Preferences.AutoSync.Always -> {
-                    autoSync(
-                        connectionType = NetworkType.CONNECTED
-                    )
-                }
-            }
-        }
-    }
-
-    private fun autoSync(
-        connectionType: NetworkType,
-        chargingBattery: Boolean = false,
-    ) {
-        BatchSyncWorker.enqueuePeriodic(
-            connectionType = connectionType,
-            chargingBattery = chargingBattery,
-        )
     }
 
     private fun updateProxy() {
@@ -300,7 +248,12 @@ class NeoApp : Application(), SingletonImageLoader.Factory, KoinStartup {
         withContext(Dispatchers.IO) {
             reposRepo.loadAll().forEach {
                 if (it.lastModified.isNotEmpty() || it.entityTag.isNotEmpty()) {
-                    reposRepo.upsert(it.copy(lastModified = "", entityTag = ""))
+                    reposRepo.upsert(
+                        it.copy(
+                            lastModified = "", entryLastModified = "",
+                            entityTag = "", entryEntityTag = ""
+                        )
+                    )
                 }
             }
             BatchSyncWorker.enqueue(SyncRequest.FORCE)

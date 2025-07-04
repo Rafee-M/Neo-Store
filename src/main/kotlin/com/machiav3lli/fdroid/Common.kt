@@ -6,6 +6,7 @@ const val NOTIFICATION_CHANNEL_SYNCING = "syncing"
 const val NOTIFICATION_CHANNEL_UPDATES = "updates"
 const val NOTIFICATION_CHANNEL_DOWNLOADING = "downloading"
 const val NOTIFICATION_CHANNEL_INSTALLER = "installed"
+const val NOTIFICATION_CHANNEL_DEBUG = "debug"
 const val NOTIFICATION_CHANNEL_VULNS = "vulnerabilities"
 
 const val NOTIFICATION_ID_SYNCING = 1000
@@ -31,6 +32,7 @@ const val TABLE_REPOSITORY = "repository"
 const val TABLE_REPOCATEGORY = "repo_category"
 const val TABLE_REPOCATEGORY_TEMP = "temporary_repo_category"
 const val TABLE_TRACKER = "tracker"
+const val TABLE_RB_LOG = "rb_log"
 
 const val ROW_ADDED = "added"
 const val ROW_ANTIFEATURES = "antiFeatures"
@@ -60,6 +62,7 @@ const val ROW_PACKAGE_NAME = "packageName"
 const val ROW_PLATFORMS = "platforms"
 const val ROW_RELEASES = "releases"
 const val ROW_REPOSITORY_ID = "repositoryId"
+const val ROW_REPRODUCIBLE = "reproducible"
 const val ROW_SCREENSHOTS = "screenshots"
 const val ROW_SELECTED = "selected"
 const val ROW_SIGNATURES = "signatures"
@@ -68,9 +71,11 @@ const val ROW_SOURCE = "source"
 const val ROW_SUGGESTED_VERSION_CODE = "suggestedVersionCode"
 const val ROW_SUMMARY = "summary"
 const val ROW_TARGETSDK_VERSION = "targetSdkVersion"
+const val ROW_TIMESTAMP = "timestamp"
 const val ROW_TRACKER = "tracker"
 const val ROW_UPDATED = "updated"
 const val ROW_VERSION_CODE = "versionCode"
+const val ROW_VERSION_NAME = "versionName"
 const val ROW_WEB = "web"
 const val ROW_WHATS_NEW = "whatsNew"
 
@@ -111,14 +116,17 @@ const val TAG_BATCH_SYNC_ONETIME = "batch_sync_onetime"
 const val TAG_BATCH_SYNC_PERIODIC = "batch_sync_periodic"
 
 const val EXODUS_TRACKERS_SYNC = -22L
+const val RB_LOGS_SYNC = -23L
 
 const val CLIENT_USER_AGENT = "${BuildConfig.APPLICATION_ID}/${BuildConfig.VERSION_CODE}"
-const val POOL_DEFAULT_MAX_IDLE_CONNECTIONS = 15 // TODO make configurable
 const val POOL_DEFAULT_KEEP_ALIVE_DURATION_M = 5L
 const val CLIENT_CONNECT_TIMEOUT = 30L
 const val CLIENT_CONNECT_TIMEOUT_MS = 20_000L
 const val CLIENT_READ_TIMEOUT = 30L
 const val CLIENT_WRITE_TIMEOUT = 30L
+
+const val BUFFER_SIZE = 1024 * 1024 // 1MB buffer
+const val STATEFLOW_SUBSCRIBE_BUFFER = 60_000L // 1 minute buffer
 
 const val HOST_ICON = "icon"
 const val HOST_SCREENSHOT = "screenshot"

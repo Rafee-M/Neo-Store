@@ -1,5 +1,7 @@
 import com.android.build.gradle.internal.tasks.factory.dependsOn
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.dsl.kotlinExtension
+import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 
 plugins {
     alias(libs.plugins.android.application)
@@ -12,6 +14,9 @@ plugins {
 
 val jvmVersion = JavaVersion.VERSION_17
 
+val detectedLocales = detectLocales()
+val langsListString = "{${detectedLocales.sorted().joinToString(",") { "\"$it\"" }}}"
+
 ksp {
     arg("room.schemaLocation", "$projectDir/schemas")
     arg("room.incremental", "true")
@@ -19,15 +24,16 @@ ksp {
 
 android {
     namespace = "com.machiav3lli.fdroid"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.machiav3lli.fdroid"
         minSdk = 24
         targetSdk = 35
-        versionCode = 1027
-        versionName = "1.1.0-alpha01"
+        versionCode = 1101
+        versionName = "1.1.0-alpha03"
         buildConfigField("String", "KEY_API_EXODUS", "\"81f30e4903bde25023857719e71c94829a41e6a5\"")
+        buildConfigField("String[]", "DETECTED_LOCALES", langsListString)
     }
 
     sourceSets.forEach { source ->
@@ -40,11 +46,6 @@ android {
     compileOptions {
         sourceCompatibility = jvmVersion
         targetCompatibility = jvmVersion
-    }
-
-    kotlinOptions {
-        jvmTarget = jvmVersion.toString()
-        freeCompilerArgs = listOf("-Xjvm-default=all-compatibility")
     }
 
     buildFeatures {
@@ -74,9 +75,8 @@ android {
             resValue("string", "application_name", "Neo Store - Neo")
         }
         release {
-            // disabled because of a performance issue on minified builds for now
-            isMinifyEnabled = false
-            isShrinkResources = false
+            isMinifyEnabled = true
+            isShrinkResources = true
             resValue("string", "application_name", "Neo Store")
         }
         all {
@@ -116,6 +116,13 @@ android {
         // Avoid Google-signed dependency metadata in builds
         includeInApk = false
         includeInBundle = false
+    }
+
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+        unitTests.all {
+            it.useJUnitPlatform()
+        }
     }
 }
 
@@ -193,25 +200,30 @@ dependencies {
     implementation(libs.accompanist.permissions)
     debugImplementation(libs.compose.ui.tooling)
     debugImplementation(libs.compose.ui.tooling.preview)
+
+    // Test
+    testImplementation(libs.kotlin.test)
+    testImplementation(libs.junit.jupiter.api)
+    testImplementation(libs.junit.jupiter.engine)
+    testImplementation(libs.junit.jupiter.params)
 }
 
-// using a task as a preBuild dependency instead of a function that takes some time insures that it runs
-tasks.register("detectAndroidLocals") {
-    val langsList: MutableSet<String> = HashSet()
+tasks.withType<KotlinCompile>().configureEach {
+    compilerOptions {
+        jvmTarget.set(JvmTarget.JVM_17)
+        freeCompilerArgs = listOf("-Xjvm-default=all-compatibility", "-XXLanguage:+ExplicitBackingFields")
+    }
+}
 
-    // in /res are (almost) all languages that have a translated string is saved. this is safer and saves some time
+fun detectLocales(): Set<String> {
+    val langsList = mutableSetOf<String>()
     fileTree("src/main/res").visit {
-        if (this.file.path.endsWith("strings.xml")
-            && this.file.canonicalFile.readText().contains("<string")
-        ) {
-            var languageCode = this.file.parentFile?.name?.replace("values-", "")
-            languageCode = if (languageCode == "values") "en" else languageCode
-            languageCode?.let {
-                langsList.add(languageCode)
+        if (this.file.name == "strings.xml" && this.file.readText().contains("<string")) {
+            val languageCode = this.file.parentFile?.name?.removePrefix("values-")?.let {
+                if (it == "values") "en" else it
             }
+            languageCode?.let { langsList.add(it) }
         }
     }
-    val langsListString = "{${langsList.sorted().joinToString(",") { "\"${it}\"" }}}"
-    android.defaultConfig.buildConfigField("String[]", "DETECTED_LOCALES", langsListString)
+    return langsList
 }
-tasks.preBuild.dependsOn("detectAndroidLocals")

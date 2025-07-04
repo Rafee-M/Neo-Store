@@ -1,6 +1,6 @@
 package com.machiav3lli.fdroid.data.database.entity
 
-import android.net.Uri
+import androidx.core.net.toUri
 import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.Index
@@ -17,7 +17,6 @@ import com.machiav3lli.fdroid.TABLE_RELEASE_TEMP
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
-// TODO consider denormalizing by adding minSdkVersion and maxSdkVersion columns to Product
 @Entity(
     tableName = TABLE_RELEASE,
     primaryKeys = [ROW_PACKAGE_NAME, ROW_REPOSITORY_ID, ROW_VERSION_CODE, ROW_SIGNATURE, ROW_PLATFORMS, ROW_HASH],
@@ -88,7 +87,7 @@ open class Release(
         get() = "$packageName&$repositoryId#$versionCode%$signature§$platforms.$hash"
 
     fun getDownloadUrl(repository: Repository): String {
-        return Uri.parse(repository.address).buildUpon().appendPath(release).build().toString()
+        return repository.downloadAddress.toUri().buildUpon().appendPath(release).build().toString()
     }
 
     val cacheFileName: String
@@ -104,32 +103,32 @@ open class Release(
         incompatibilities: List<Incompatibility>,
         selected: Boolean,
     ) = Release(
-        packageName,
-        repositoryId,
-        selected,
-        version,
-        versionCode,
-        added,
-        size,
-        minSdkVersion,
-        targetSdkVersion,
-        maxSdkVersion,
-        source,
-        release,
-        hash,
-        hashType,
-        signature,
-        obbMain,
-        obbMainHash,
-        obbMainHashType,
-        obbPatch,
-        obbPatchHash,
-        obbPatchHashType,
-        permissions,
-        features,
-        platforms,
-        incompatibilities,
-        incompatibilities.isEmpty(),
+        packageName = packageName,
+        repositoryId = repositoryId,
+        selected = selected,
+        version = version,
+        versionCode = versionCode,
+        added = added,
+        size = size,
+        minSdkVersion = minSdkVersion,
+        targetSdkVersion = targetSdkVersion,
+        maxSdkVersion = maxSdkVersion,
+        source = source,
+        release = release,
+        hash = hash,
+        hashType = hashType,
+        signature = signature,
+        obbMain = obbMain,
+        obbMainHash = obbMainHash,
+        obbMainHashType = obbMainHashType,
+        obbPatch = obbPatch,
+        obbPatchHash = obbPatchHash,
+        obbPatchHashType = obbPatchHashType,
+        permissions = permissions,
+        features = features,
+        platforms = platforms,
+        incompatibilities = incompatibilities,
+        isCompatible = incompatibilities.isEmpty(),
     )
 }
 
@@ -162,32 +161,32 @@ class ReleaseTemp(
     incompatibilities: List<Incompatibility>,
     isCompatible: Boolean,
 ) : Release(
-    packageName,
-    repositoryId,
-    selected,
-    version,
-    versionCode,
-    added,
-    size,
-    minSdkVersion,
-    targetSdkVersion,
-    maxSdkVersion,
-    source,
-    release,
-    hash,
-    hashType,
-    signature,
-    obbMain,
-    obbMainHash,
-    obbMainHashType,
-    obbPatch,
-    obbPatchHash,
-    obbPatchHashType,
-    permissions,
-    features,
-    platforms,
-    incompatibilities,
-    isCompatible,
+    packageName = packageName,
+    repositoryId = repositoryId,
+    selected = selected,
+    version = version,
+    versionCode = versionCode,
+    added = added,
+    size = size,
+    minSdkVersion = minSdkVersion,
+    targetSdkVersion = targetSdkVersion,
+    maxSdkVersion = maxSdkVersion,
+    source = source,
+    release = release,
+    hash = hash,
+    hashType = hashType,
+    signature = signature,
+    obbMain = obbMain,
+    obbMainHash = obbMainHash,
+    obbMainHashType = obbMainHashType,
+    obbPatch = obbPatch,
+    obbPatchHash = obbPatchHash,
+    obbPatchHashType = obbPatchHashType,
+    permissions = permissions,
+    features = features,
+    platforms = platforms,
+    incompatibilities = incompatibilities,
+    isCompatible = isCompatible,
 )
 
 fun Release.asReleaseTemp() = ReleaseTemp(

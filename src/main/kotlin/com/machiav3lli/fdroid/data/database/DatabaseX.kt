@@ -1,5 +1,6 @@
 package com.machiav3lli.fdroid.data.database
 
+import android.util.Log
 import androidx.room.AutoMigration
 import androidx.room.Database
 import androidx.room.DeleteColumn
@@ -29,6 +30,7 @@ import com.machiav3lli.fdroid.data.database.dao.InstallTaskDao
 import com.machiav3lli.fdroid.data.database.dao.InstalledDao
 import com.machiav3lli.fdroid.data.database.dao.ProductDao
 import com.machiav3lli.fdroid.data.database.dao.ProductTempDao
+import com.machiav3lli.fdroid.data.database.dao.RBLogDao
 import com.machiav3lli.fdroid.data.database.dao.ReleaseDao
 import com.machiav3lli.fdroid.data.database.dao.ReleaseTempDao
 import com.machiav3lli.fdroid.data.database.dao.RepoCategoryDao
@@ -46,6 +48,7 @@ import com.machiav3lli.fdroid.data.database.entity.InstallTask
 import com.machiav3lli.fdroid.data.database.entity.Installed
 import com.machiav3lli.fdroid.data.database.entity.Product
 import com.machiav3lli.fdroid.data.database.entity.ProductTemp
+import com.machiav3lli.fdroid.data.database.entity.RBLog
 import com.machiav3lli.fdroid.data.database.entity.Release
 import com.machiav3lli.fdroid.data.database.entity.ReleaseTemp
 import com.machiav3lli.fdroid.data.database.entity.RepoCategory
@@ -53,6 +56,7 @@ import com.machiav3lli.fdroid.data.database.entity.RepoCategoryTemp
 import com.machiav3lli.fdroid.data.database.entity.Repository
 import com.machiav3lli.fdroid.data.database.entity.Repository.Companion.addedReposV10
 import com.machiav3lli.fdroid.data.database.entity.Repository.Companion.addedReposV11
+import com.machiav3lli.fdroid.data.database.entity.Repository.Companion.addedReposV1102
 import com.machiav3lli.fdroid.data.database.entity.Repository.Companion.addedReposV12
 import com.machiav3lli.fdroid.data.database.entity.Repository.Companion.addedReposV14
 import com.machiav3lli.fdroid.data.database.entity.Repository.Companion.addedReposV15
@@ -73,6 +77,7 @@ import com.machiav3lli.fdroid.data.database.entity.Repository.Companion.removedR
 import com.machiav3lli.fdroid.data.database.entity.Repository.Companion.removedReposV31
 import com.machiav3lli.fdroid.data.database.entity.Tracker
 import com.machiav3lli.fdroid.manager.work.SyncWorker.Companion.enableRepo
+import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
@@ -80,6 +85,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.koin.dsl.module
 import org.koin.java.KoinJavaComponent.get
+import java.io.File
 
 @Database(
     entities = [
@@ -99,9 +105,10 @@ import org.koin.java.KoinJavaComponent.get
         Downloaded::class,
         InstallTask::class,
         AntiFeature::class,
-        AntiFeatureTemp::class
+        AntiFeatureTemp::class,
+        RBLog::class,
     ],
-    version = 1100,
+    version = 1102,
     exportSchema = true,
     autoMigrations = [
         AutoMigration(
@@ -225,6 +232,15 @@ import org.koin.java.KoinJavaComponent.get
             to = 1100,
             spec = DatabaseX.Companion.RevampProductsToV2::class
         ),
+        AutoMigration(
+            from = 1100,
+            to = 1101,
+        ),
+        AutoMigration(
+            from = 1101,
+            to = 1102,
+            spec = DatabaseX.Companion.AutoMigration1101to1102::class
+        ),
     ]
 )
 @TypeConverters(Converters::class)
@@ -240,6 +256,7 @@ abstract class DatabaseX : RoomDatabase() {
     abstract fun getExodusInfoDao(): ExodusInfoDao
     abstract fun getTrackerDao(): TrackerDao
     abstract fun getDownloadedDao(): DownloadedDao
+    abstract fun getRBLogDao(): RBLogDao
 
     // TODO replace external calls
     abstract fun getReleaseTempDao(): ReleaseTempDao
@@ -250,15 +267,41 @@ abstract class DatabaseX : RoomDatabase() {
     abstract fun getInstallTaskDao(): InstallTaskDao
 
     companion object {
+        const val TAG = "DatabaseX"
+
         val dbCreateCallback = object : Callback() {
             override fun onCreate(db: SupportSQLiteDatabase) {
                 super.onCreate(db)
                 CoroutineScope(Dispatchers.IO).launch {
                     val dao = get<RepositoryDao>(RepositoryDao::class.java)
-                    if (dao.getCount() == 0) dao.put(*defaultRepositories.toTypedArray())
+                    if (dao.getCount() == 0)
+                        dao.put(
+                            *(defaultRepositories + loadPresetRepos())
+                                .distinctBy(Repository::address)
+                                .toTypedArray()
+                        )
                 }
             }
         }
+
+        private fun loadPresetRepos(): List<Repository> =
+            persistentListOf("/system", "/product", "/vendor", "/odm", "/oem")
+                .mapNotNull { root ->
+                    // TODO use com.machiav3lli.fdroid or packageName when provided by OEMs
+                    val additionalReposFile =
+                        File("$root/etc/org.fdroid.fdroid/additional_repos.xml")
+                    try {
+                        if (additionalReposFile.isFile())
+                            Repository.parsePresetReposXML(additionalReposFile)
+                        else null
+                    } catch (e: Exception) {
+                        Log.e(
+                            TAG,
+                            "Preset Repositories: Failed loading additional repos from $additionalReposFile: ${e.message}"
+                        )
+                        null
+                    }
+                }.flatten()
 
         class MigrationSpec8to9 : AutoMigrationSpec {
             override fun onPostMigrate(db: SupportSQLiteDatabase) {
@@ -392,6 +435,13 @@ abstract class DatabaseX : RoomDatabase() {
             }
         }
 
+        class AutoMigration1101to1102 : AutoMigrationSpec {
+            override fun onPostMigrate(db: SupportSQLiteDatabase) {
+                super.onPostMigrate(db)
+                onPostMigrate(1101)
+            }
+        }
+
         class ProductsCleanup : AutoMigrationSpec {
             override fun onPostMigrate(db: SupportSQLiteDatabase) {
                 super.onPostMigrate(db)
@@ -427,6 +477,9 @@ abstract class DatabaseX : RoomDatabase() {
                             runBlocking {
                                 getRepositoryDao().emptyTable()
                                 getRepositoryDao().put(*defaultRepositories.toTypedArray())
+                                getDownloadedDao().emptyTable()
+                                getInstallTaskDao().emptyTable()
+                                getReleaseDao().emptyTable()
                             }
                         }
                     }
@@ -451,6 +504,7 @@ abstract class DatabaseX : RoomDatabase() {
                 22   -> addedReposV23
                 28   -> addedReposV29
                 29   -> addedReposV30
+                1101 -> addedReposV1102
                 else -> emptyList()
             }
             val rmRps = when (from) {
@@ -543,4 +597,5 @@ val databaseModule = module {
     single { get<DatabaseX>().getTrackerDao() }
     single { get<DatabaseX>().getDownloadedDao() }
     single { get<DatabaseX>().getInstallTaskDao() }
+    single { get<DatabaseX>().getRBLogDao() }
 }

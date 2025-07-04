@@ -167,6 +167,8 @@ class BatchSyncWorker(
             ).await()
         }
         ExodusWorker.fetchTrackers()
+        if (Preferences[Preferences.Key.RBProvider] != Preferences.RBProvider.None)
+            RBWorker.fetchRBLogs()
         withTimeout(TimeUnit.HOURS.toMillis(1)) {
             workJobs.joinAll()
         }

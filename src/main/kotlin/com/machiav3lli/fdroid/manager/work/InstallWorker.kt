@@ -3,6 +3,7 @@ package com.machiav3lli.fdroid.manager.work
 import android.content.Context
 import android.content.pm.ServiceInfo
 import android.os.Build
+import android.util.Log
 import androidx.lifecycle.withResumed
 import androidx.work.CoroutineWorker
 import androidx.work.Data
@@ -20,96 +21,224 @@ import com.machiav3lli.fdroid.ContextWrapperX
 import com.machiav3lli.fdroid.NeoApp
 import com.machiav3lli.fdroid.data.database.entity.InstallTask
 import com.machiav3lli.fdroid.data.entity.InstallState
+import com.machiav3lli.fdroid.manager.installer.BaseInstaller
+import com.machiav3lli.fdroid.manager.installer.InstallationError
 import com.machiav3lli.fdroid.manager.installer.LegacyInstaller
 import com.machiav3lli.fdroid.utils.extension.android.Android
 import com.machiav3lli.fdroid.utils.installNotificationBuilder
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.withTimeout
+import org.koin.core.component.KoinComponent
+import org.koin.core.component.inject
 import kotlin.coroutines.cancellation.CancellationException
 
 class InstallWorker(
     val context: Context,
     params: WorkerParameters,
-) : CoroutineWorker(context, params) {
+) : CoroutineWorker(context, params), KoinComponent {
     private lateinit var currentTask: InstallTask
-    private val installState = MutableStateFlow<InstallState>(InstallState.Pending)
-    private val installerInstance = NeoApp.installer
+    private val installState = MutableStateFlow<InstallState>(InstallState.Preparing)
+    private val installer: BaseInstaller by inject()
     private val installJob = Job()
     private val langContext = ContextWrapperX.wrap(applicationContext)
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO + installJob) {
         val label = inputData.getString(ARG_NAME) ?: ""
         val fileName = inputData.getString(ARG_FILE_NAME) ?: ""
+        val packageName = inputData.getString(ARG_PACKAGE_NAME) ?: ""
+        val maxRetries = 3
+        var attemptCount = 0
 
-        try {
-            withTimeoutOrNull(INSTALL_TIMEOUT) {
-                handleInstall(label, fileName)
-            } ?: run {
-                installState.value = InstallState.Failed("Installation timed out")
-                Result.failure()
-            }
-        } catch (e: CancellationException) {
-            installState.value = InstallState.Failed("Installation cancelled: ${e.message}")
-            Result.failure()
-        }
-    }
+        Log.d(TAG, "Starting installation task for $packageName ($fileName)")
 
-    private suspend fun handleInstall(label: String, fileName: String): Result? = coroutineScope {
-        var result: Result? = null
-        currentTask = NeoApp.db.getInstallTaskDao()
-            .get(fileName) ?: return@coroutineScope null
-        while (installState.value !is InstallState.Completed && installState.value !is InstallState.Failed) {
-            when (installState.value) {
-                InstallState.Pending    -> {
-                    if (!installerInstance.isInstalling(currentTask.packageName)) {
-                        installState.value = InstallState.Installing
-                        try {
-                            if (NeoApp.mainActivity != null && installerInstance is LegacyInstaller) {
-                                NeoApp.mainActivity?.withResumed {
-                                    launch {
-                                        installerInstance.install(label, fileName) {
-                                            installState.value = InstallState.Completed
-                                            result = Result.success()
-                                        }
-                                    }
-                                }
-                            } else {
-                                installerInstance.install(label, fileName) {
-                                    installState.value = InstallState.Completed
-                                    result = Result.success()
-                                }
-                            }
-                        } catch (e: Exception) {
-                            installState.value =
-                                InstallState.Failed(e.message ?: "Unknown error")
-                            result = Result.failure()
-                        }
+        while (attemptCount < maxRetries) {
+            try {
+                attemptCount++
+                Log.d(TAG, "Installation attempt $attemptCount for $packageName")
+
+                val result = withTimeout(INSTALL_TIMEOUT) {
+                    handleInstall(label, fileName)
+                }
+
+                if (result == Result.success()) {
+                    Log.d(
+                        TAG,
+                        "Installation successful for $packageName after $attemptCount attempts"
+                    )
+                    return@withContext result
+                }
+
+                if (attemptCount < maxRetries) {
+                    (INITIAL_BACKOFF_MILLIS * (1 shl (attemptCount - 1))).let { delayTime ->
+                        Log.w(TAG, "Retrying installation of $packageName in ${delayTime}ms")
+                        delay(delayTime)
                     }
                 }
-
-                InstallState.Installing -> {
-                    // Wait for installation to complete
-                    delay(2000)
-                }
-
-                InstallState.Completed  -> {
-                    result = Result.success()
-                    break
-                }
-
-                is InstallState.Failed  -> {
-                    result = Result.failure()
-                    break
-                }
+            } catch (e: TimeoutCancellationException) {
+                Log.w(
+                    TAG,
+                    "Installation timed out for $packageName (attempt $attemptCount): ${e.message}"
+                )
+                if (attemptCount >= maxRetries) return@withContext Result.failure()
+                delay(INITIAL_BACKOFF_MILLIS * (1 shl (attemptCount - 1)))
+            } catch (e: CancellationException) {
+                Log.w(TAG, "Installation cancelled for $packageName: ${e.message}")
+                return@withContext Result.failure()
+            } catch (e: Exception) {
+                Log.e(
+                    TAG,
+                    "Installation failed for $packageName (attempt $attemptCount): ${e.message}",
+                    e
+                )
+                if (attemptCount >= maxRetries) return@withContext Result.failure()
+                delay(INITIAL_BACKOFF_MILLIS * (1 shl (attemptCount - 1)))
             }
         }
-        result
+
+        Log.e(TAG, "Installation failed for $packageName after $maxRetries attempts")
+        Result.failure()
+    }
+
+    private suspend fun handleInstall(label: String, fileName: String): Result = coroutineScope {
+        var installResult: Result = Result.failure()
+        var installLaunched = false
+
+        try {
+            var attemptsCount = 0
+            val maxRetries = 3
+            currentTask = NeoApp.db.getInstallTaskDao().get(fileName) ?: run {
+                Log.e(TAG, "No install task found for $fileName")
+                return@coroutineScope Result.failure()
+            }
+
+            while (installState.value !is InstallState.Success && installState.value !is InstallState.Failed && attemptsCount < maxRetries) {
+                when (installState.value) {
+                    is InstallState.Preparing -> {
+                        if (!installer.isEnqueued(currentTask.packageName)) {
+                            installState.value = InstallState.Installing(0.05f)
+
+                            val installCallback = { result: kotlin.Result<String> ->
+                                handleInstallResult(result, currentTask.packageName)
+                                installState.value = result.fold(
+                                    onSuccess = { InstallState.Success },
+                                    onFailure = { InstallState.Failed(it) },
+                                )
+                                installResult =
+                                    if (result.isSuccess) Result.success() else Result.failure()
+                            }
+                            try {
+                                installLaunched = true
+                                if (installer is LegacyInstaller && NeoApp.mainActivity != null) {
+                                    NeoApp.mainActivity?.withResumed {
+                                        launch {
+                                            installer.install(label, fileName, installCallback)
+                                        }
+                                    }
+                                } else {
+                                    installer.install(label, fileName, installCallback)
+                                }
+                            } catch (e: Exception) {
+                                Log.e(
+                                    TAG,
+                                    "Error launching installer for ${currentTask.packageName}: ${e.message}"
+                                )
+                                installState.value = InstallState.Failed(e)
+                                installResult = Result.failure()
+                                attemptsCount++
+                                delay(1000) // Brief delay before potential retry
+                            }
+                        } else {
+                            Log.d(
+                                TAG,
+                                "${currentTask.packageName} is already enqueued, waiting..."
+                            )
+                            delay(1000)
+                        }
+                    }
+
+                    is InstallState.Pending,
+                    is InstallState.Installing,
+                                              -> {
+                        // Wait for installation to complete
+                        delay(2000)
+                    }
+
+                    is InstallState.Success   -> {
+                        installResult = Result.success()
+                        break
+                    }
+
+                    is InstallState.Failed    -> {
+                        installResult = Result.failure()
+                        break
+                    }
+                }
+            }
+
+        } catch (e: Exception) {
+            Log.e(
+                TAG,
+                "Install failed while in handleInstall for ${currentTask.packageName}: ${e.message}",
+                e
+            )
+            installResult = Result.failure()
+        } finally {
+            // Clean up the installation task
+            runCatching {
+                if (this@InstallWorker::currentTask.isInitialized) {
+                    Log.d(TAG, "Cleaning up install task for ${currentTask.packageName}")
+                    if (installResult == Result.success() || installLaunched) {
+                        NeoApp.db.getInstallTaskDao().delete(currentTask.packageName)
+                    }
+                }
+            }.onFailure { e ->
+                Log.e(TAG, "Error during cleanup: ${e.message}", e)
+            }
+        }
+        installResult
+    }
+
+    private fun handleInstallResult(result: kotlin.Result<String>, packageName: String) {
+        result.fold(
+            onSuccess = {
+                Log.d(TAG, "Successfully installed $packageName")
+                // Additional successful install handling if needed
+            },
+            onFailure = { throwable ->
+                when (throwable) {
+                    is InstallationError.InsufficientStorage -> {
+                        Log.e(TAG, "Insufficient storage for installing $packageName")
+                    }
+
+                    is InstallationError.Downgrade -> {
+                        Log.e(TAG, "Attempted downgrade of $packageName")
+                    }
+
+                    is InstallationError.ConflictingSignature -> {
+                        Log.e(TAG, "Conflicting signature for $packageName")
+                    }
+
+                    is InstallationError.RootAccessDenied -> {
+                        Log.e(TAG, "Root access denied when installing $packageName")
+                    }
+
+                    is InstallationError.UserCancelled -> {
+                        Log.w(TAG, "User cancelled installation of $packageName")
+                    }
+
+                    else -> {
+                        Log.e(TAG, "Error installing $packageName: ${throwable.message}")
+                    }
+                }
+            }
+        )
     }
 
     override suspend fun getForegroundInfo(): ForegroundInfo {
@@ -135,9 +264,13 @@ class InstallWorker(
     }
 
     companion object {
+        private const val TAG = "InstallWorker"
         private const val INSTALL_TIMEOUT = 10 * 60 * 1000L // 10 minutes
         private const val INITIAL_BACKOFF_MILLIS = 1000L
 
+        /**
+         * Enqueues an installation task to be executed by the WorkManager
+         */
         fun enqueue(
             packageName: String,
             label: String,
@@ -147,6 +280,7 @@ class InstallWorker(
             val data = workDataOf(
                 ARG_NAME to label,
                 ARG_FILE_NAME to fileName,
+                ARG_PACKAGE_NAME to packageName,
             )
 
             val installerRequest = OneTimeWorkRequestBuilder<InstallWorker>()
@@ -159,13 +293,16 @@ class InstallWorker(
                 .addTag("installer")
                 .build()
 
-            NeoApp.wm.workManager
-                .enqueueUniqueWork(
-                    "Installer_$packageName",
-                    if (enforce) ExistingWorkPolicy.REPLACE
-                    else ExistingWorkPolicy.KEEP,
-                    installerRequest,
-                )
+            NeoApp.wm.enqueueUniqueWork(
+                "Installer_$packageName",
+                if (enforce) ExistingWorkPolicy.REPLACE
+                else ExistingWorkPolicy.KEEP,
+                installerRequest,
+            )
+            Log.d(
+                TAG,
+                "Enqueued installation task for $packageName ($fileName) with enforce=$enforce"
+            )
         }
     }
 }

@@ -184,8 +184,8 @@
     <string name="only_on_wifi_and_battery">Solo con Wi-Fi e in carica</string>
     <string name="install_after_sync">Aggiornamento automatico</string>
     <string name="install_after_sync_summary">Installa tutte le nuove versioni dopo aver esaminato i repository per le nuove app.</string>
-    <string name="prefs_updated_apps">Numero app in \"Aggiornate di recente\\</string>
-    <string name="prefs_new_apps">Numero app in \"Nuove app\"</string>
+    <string name="prefs_updated_apps">Numero app in \"Aggiornate di recente\"</string>
+    <string name="prefs_new_apps">Numero app da mostrare in \"Nuove app\"</string>
     <string name="new_repository">Nuovo repository</string>
     <string name="default_tab">Scheda predefinita</string>
     <string name="pending">In attesa</string>
@@ -427,4 +427,14 @@
     <string name="index_v2_summary">Permette di richiedere Index-V2 come indice primario. Ancora sperimentale, presenta vantaggi e svantaggi.</string>
     <string name="index_v2">Abilita Index-V2</string>
     <string name="action_start">Andiamo!</string>
+    <string name="max_idle_connections_description">Numero massimo di connessioni inattive su tutti gli indirizzi da mantenere attivi.</string>
+    <string name="mirror_rotation">Rotazione specchio</string>
+    <string name="notify_channel_debug">Debug</string>
+    <string name="repo_index_timestamp">Timestamp indice</string>
+    <string name="rb_badge">Distintivo di build riproducibile</string>
+    <string name="rb_provider">Fornitore di log di build riproducibili</string>
+    <string name="rb_none">Nessun fornitore</string>
+    <string name="rb_izzyondroid">IzzyOnDroid</string>
+    <string name="rb_bg443">bg443</string>
+    <string name="rb_obfusk">Obfusk</string>
 </resources>

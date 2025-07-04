@@ -1,10 +1,12 @@
 package com.machiav3lli.fdroid.viewmodels
 
+import android.util.Log
 import androidx.compose.material3.adaptive.layout.ListDetailPaneScaffoldRole
 import androidx.compose.material3.adaptive.layout.ThreePaneScaffoldRole
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.machiav3lli.fdroid.NeoApp
+import com.machiav3lli.fdroid.STATEFLOW_SUBSCRIBE_BUFFER
 import com.machiav3lli.fdroid.data.content.Cache
 import com.machiav3lli.fdroid.data.database.entity.AntiFeatureDetails
 import com.machiav3lli.fdroid.data.database.entity.CategoryDetails
@@ -108,9 +110,9 @@ open class MainVM(
             catsMap[name]?.let { Pair(it.name, it.label) } ?: Pair(name, "")
         }
     }.stateIn(
-        viewModelScope,
-        SharingStarted.Lazily,
-        emptyList(),
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(STATEFLOW_SUBSCRIBE_BUFFER),
+        initialValue = emptyList(),
     )
 
     val successfulSyncs = reposRepo.getLatestUpdates()
@@ -124,10 +126,12 @@ open class MainVM(
     }
 
     val installed = installedRepo.getAll().map {
-        it.associateBy(Installed::packageName)
+        it.associateBy(Installed::packageName).apply {
+            Log.d(TAG, "Installed list size: ${this.size}")
+        }
     }.stateIn(
         scope = ioScope,
-        started = SharingStarted.Lazily,
+        started = SharingStarted.WhileSubscribed(STATEFLOW_SUBSCRIBE_BUFFER),
         initialValue = emptyMap()
     )
 
@@ -138,7 +142,7 @@ open class MainVM(
         request(src)
     }.stateIn(
         scope = ioScope,
-        started = SharingStarted.Lazily,
+        started = SharingStarted.WhileSubscribed(STATEFLOW_SUBSCRIBE_BUFFER),
         initialValue = request(Source.NONE)
     )
 
@@ -149,7 +153,7 @@ open class MainVM(
         request(src)
     }.stateIn(
         scope = ioScope,
-        started = SharingStarted.Lazily,
+        started = SharingStarted.WhileSubscribed(STATEFLOW_SUBSCRIBE_BUFFER),
         initialValue = request(Source.SEARCH)
     )
 
@@ -161,7 +165,9 @@ open class MainVM(
         .flatMapLatest { it }
         .distinctUntilChanged()
         .mapLatest { list ->
-            list.map { it.toItem(installed.value[it.product.packageName]) }
+            list.map { it.toItem(installed.value[it.product.packageName]) }.apply {
+                Log.d(TAG, "Explore products list size: ${this.size}")
+            }
         }
 
     private val productsSearch: Flow<List<EmbeddedProduct>> = combine(
@@ -178,10 +184,12 @@ open class MainVM(
         installed,
     ) { products, query, installed ->
         products.matchSearchQuery(query)
-            .map { it.toItem(installed[it.product.packageName]) }
+            .map { it.toItem(installed[it.product.packageName]) }.apply {
+                Log.d(TAG, "Search products list size: ${this.size}")
+            }
     }.stateIn(
         scope = ioScope,
-        started = SharingStarted.Lazily,
+        started = SharingStarted.WhileSubscribed(STATEFLOW_SUBSCRIBE_BUFFER),
         initialValue = emptyList()
     )
 
@@ -193,7 +201,9 @@ open class MainVM(
         .flatMapLatest { it }
         .distinctUntilChanged()
         .mapLatest { list ->
-            list.map { it.toItem(installed.value[it.product.packageName]) }
+            list.map { it.toItem(installed.value[it.product.packageName]) }.apply {
+                Log.d(TAG, "Installed products list size: ${this.size}")
+            }
         }
 
     val downloaded = downloadedRepo.getAllFlow()
@@ -208,7 +218,9 @@ open class MainVM(
         .flatMapLatest { it }
         .distinctUntilChanged()
         .mapLatest { list ->
-            list.map { it.toItem(installed.value[it.product.packageName]) }
+            list.map { it.toItem(installed.value[it.product.packageName]) }.apply {
+                Log.d(TAG, "Updated products list size: ${this.size}")
+            }
         }
 
     val newProdsLatest: Flow<List<ProductItem>> = combine(
@@ -218,7 +230,9 @@ open class MainVM(
         .flatMapLatest { it }
         .distinctUntilChanged()
         .mapLatest { list ->
-            list.map { it.toItem(installed.value[it.product.packageName]) }
+            list.map { it.toItem(installed.value[it.product.packageName]) }.apply {
+                Log.d(TAG, "New products list size: ${this.size}")
+            }
         }
 
     val updateProdsInstalled: Flow<List<ProductItem>> = combine(
@@ -228,7 +242,9 @@ open class MainVM(
         .flatMapLatest { it }
         .distinctUntilChanged()
         .mapLatest { list ->
-            list.map { it.toItem(installed.value[it.product.packageName]) }
+            list.map { it.toItem(installed.value[it.product.packageName]) }.apply {
+                Log.d(TAG, "Update products list size: ${this.size}")
+            }
         }
 
     fun setSortFilter(page: Page, value: String) = viewModelScope.launch {
@@ -267,5 +283,9 @@ open class MainVM(
         viewModelScope.launch {
             extrasRepo.setFavorite(packageName, setBoolean)
         }
+    }
+
+    companion object {
+        const val TAG = "MainVM"
     }
 }

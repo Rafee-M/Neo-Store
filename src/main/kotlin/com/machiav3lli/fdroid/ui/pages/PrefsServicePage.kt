@@ -47,6 +47,7 @@ fun PrefsServicePage() {
         Preferences.Key.IncompatibleVersions,
         Preferences.Key.DisableDownloadVersionCheck,
         Preferences.Key.DisableSignatureCheck,
+        Preferences.Key.RBProvider,
     )
     val installPrefs = listOfNotNull(
         Preferences.Key.KeepInstallNotification,
@@ -57,6 +58,7 @@ fun PrefsServicePage() {
         else null,
     )
     val connectionPrefs = listOf(
+        Preferences.Key.MaxIdleConnections,
         Preferences.Key.DisableCertificateValidation,
         Preferences.Key.ProxyType,
         Preferences.Key.ProxyUrl,

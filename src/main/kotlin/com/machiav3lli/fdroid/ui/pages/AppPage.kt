@@ -254,13 +254,11 @@ fun AppPage(
                                   -> {
                 val installedItem = viewModel.installedItem.value
                 val actionJob: () -> Unit = {
-                    scope.launch {
-                        startUpdate(
-                            packageName,
-                            installedItem,
-                            productRepos
-                        )
-                    }
+                    startUpdate(
+                        packageName,
+                        installedItem,
+                        productRepos,
+                    )
                 }
                 if (Preferences[Preferences.Key.DownloadShowDialog]) {
                     val productRepository =
@@ -295,7 +293,7 @@ fun AppPage(
             ActionState.Details   -> {
                 context.startActivity(
                     Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
-                        .setData(Uri.parse("package:$packageName"))
+                        .setData("package:$packageName".toUri())
                 )
             }
 
@@ -409,7 +407,7 @@ fun AppPage(
                                 sourceType = sourceType,
                                 onClick = {
                                     onUriClick(
-                                        Uri.parse(product.source.nullIfEmpty() ?: product.web),
+                                        (product.source.nullIfEmpty() ?: product.web).toUri(),
                                         true
                                     )
                                 },
@@ -521,12 +519,12 @@ fun AppPage(
                                 }
                             }
                         }
-                        item { // TODO add markdown parsing
+                        item { // TODO add markdown parsing or not?
                             if ((product.description + product.summary).isNotEmpty()) HtmlTextBlock(
                                 shortText = product.summary,
                                 longText = product.description
                             ) {
-                                onUriClick(Uri.parse(it), true)
+                                onUriClick(it.toUri(), true)
                             }
                         }
                         val links = product.generateLinks(context)
@@ -609,6 +607,7 @@ fun AppPage(
                                 release = item.first,
                                 repository = item.second,
                                 releaseState = item.third,
+                                rbLog = item.fourth,
                                 onDownloadClick = { release ->
                                     onReleaseClick(release)
                                 },

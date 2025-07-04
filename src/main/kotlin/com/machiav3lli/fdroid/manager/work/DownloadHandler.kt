@@ -56,11 +56,28 @@ class DownloadStateHandler(
 
         when (state) {
             is DownloadState.Success -> scope.launch {
-                // TODO update notification
-                NeoApp.db.getInstallTaskDao()
-                    .put(state.toInstallTask())
-                downloadStates.updateState(key, null)
-                updateNotification(key, state)
+                runCatching {
+                    // TODO update notification
+                    Log.d(
+                        TAG,
+                        "Download successful for ${state.packageName}, preparing installation"
+                    )
+                    NeoApp.db.getInstallTaskDao().upsert(state.toInstallTask())
+                    InstallWorker.enqueue(
+                        packageName = state.packageName,
+                        label = state.name,
+                        fileName = state.cacheFileName,
+                        enforce = true,
+                    )
+                    downloadStates.updateState(key, null)
+                    updateNotification(key, state)
+                }.onFailure { e ->
+                    Log.e(
+                        TAG,
+                        "Error processing successful download for ${state.packageName}: ${e.message}",
+                        e
+                    )
+                }
             }
 
             is DownloadState.Error   -> {
@@ -109,12 +126,14 @@ class DownloadStateHandler(
         val notificationBuilder = downloadNotificationBuilder(title)
 
         return when (state) {
-            is DownloadState.Cancel  -> notificationBuilder
+            is DownloadState.Cancel
+                 -> notificationBuilder
                 .setOngoing(false)
                 .setContentText(getString(R.string.canceled))
                 .setTimeoutAfter(InstallerReceiver.INSTALLED_NOTIFICATION_TIMEOUT)
 
-            is DownloadState.Success -> notificationBuilder
+            is DownloadState.Success
+                 -> notificationBuilder
                 .setOngoing(false)
                 .setContentTitle(
                     getString(
@@ -134,14 +153,19 @@ class DownloadStateHandler(
                     }
                 }
 
-            is DownloadState.Error   -> notificationBuilder
+            is DownloadState.Error
+                 -> notificationBuilder
                 .setOngoing(false)
                 .updateWithError(this, state, state.validationError)
                 .setTimeoutAfter(InstallerReceiver.INSTALLED_NOTIFICATION_TIMEOUT)
 
             // DownloadState.Pending, DownloadState.Connecting, DownloadState.Downloading
-            else                     -> null
+            else -> null
         }
+    }
+
+    companion object {
+        const val TAG = "DownloadHandler"
     }
 }
 

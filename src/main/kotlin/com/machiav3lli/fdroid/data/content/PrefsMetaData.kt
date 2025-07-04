@@ -108,7 +108,6 @@ val NonBooleanPrefsMeta = mapOf(
     Preferences.Key.Language to R.string.prefs_language_title,
     Preferences.Key.Theme to R.string.theme,
     Preferences.Key.DefaultTab to R.string.default_tab,
-    Preferences.Key.SearchApps to R.string.prefs_search_apps_description,
     Preferences.Key.UpdatedApps to R.string.prefs_updated_apps,
     Preferences.Key.NewApps to R.string.prefs_new_apps,
     Preferences.Key.AutoSync to R.string.sync_repositories_automatically,
@@ -122,6 +121,8 @@ val NonBooleanPrefsMeta = mapOf(
     Preferences.Key.ProxyUrl to R.string.proxy_url,
     Preferences.Key.ProxyHost to R.string.proxy_host,
     Preferences.Key.ProxyPort to R.string.proxy_port,
+    Preferences.Key.MaxIdleConnections to R.string.max_idle_connections_description,
+    Preferences.Key.RBProvider to R.string.rb_provider,
 )
 
 val PrefsEntries = mapOf(
@@ -176,16 +177,21 @@ val PrefsEntries = mapOf(
         Preferences.ProxyType.Http to R.string.http_proxy,
         Preferences.ProxyType.Socks to R.string.socks_proxy,
     ),
+    Preferences.Key.RBProvider to mapOf(
+        Preferences.RBProvider.None to R.string.rb_none,
+        Preferences.RBProvider.IzzyOnDroid to R.string.rb_izzyondroid,
+        Preferences.RBProvider.BG443 to R.string.rb_bg443,
+    ),
 )
 
 val IntPrefsRanges = mapOf(
-    Preferences.Key.SearchApps to 0..10000,
     Preferences.Key.UpdatedApps to 1..1000,
     Preferences.Key.NewApps to 1..300,
     Preferences.Key.AutoSyncInterval to 1..720,
     Preferences.Key.ReleasesCacheRetention to 0..365,
     Preferences.Key.ImagesCacheRetention to 0..365,
     Preferences.Key.ProxyPort to 1..65535,
+    Preferences.Key.MaxIdleConnections to 1..32,
 )
 
 val PrefsDependencies = mapOf(

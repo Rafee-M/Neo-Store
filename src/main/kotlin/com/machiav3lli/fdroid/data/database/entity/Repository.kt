@@ -1,6 +1,8 @@
 package com.machiav3lli.fdroid.data.database.entity
 
 import android.util.Base64
+import android.util.Log
+import android.util.Xml
 import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.Index
@@ -8,9 +10,14 @@ import androidx.room.PrimaryKey
 import com.machiav3lli.fdroid.ROW_ENABLED
 import com.machiav3lli.fdroid.ROW_ID
 import com.machiav3lli.fdroid.TABLE_REPOSITORY
+import com.machiav3lli.fdroid.data.database.DatabaseX.Companion.TAG
+import com.machiav3lli.fdroid.utils.Utils.calculateSHA256
 import com.machiav3lli.fdroid.utils.extension.text.nullIfEmpty
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import org.xmlpull.v1.XmlPullParser
+import java.io.File
+import java.io.FileInputStream
 import java.net.URL
 import java.nio.charset.Charset
 
@@ -27,7 +34,6 @@ data class Repository(
     val id: Long = 0,
     var address: String = "",
     // TODO add support for countryCode and isPrimary
-    // TODO add support for mirror rotation
     val mirrors: List<String> = emptyList(),
     val name: String = "",
     val description: String = "",
@@ -35,12 +41,18 @@ data class Repository(
     val enabled: Boolean = false,
     var fingerprint: String = "",
     val lastModified: String = "",
+    @ColumnInfo(defaultValue = "")
+    val entryLastModified: String = "",
     val entityTag: String = "",
+    @ColumnInfo(defaultValue = "")
+    val entryEntityTag: String = "",
     val updated: Long = 0L,
     val timestamp: Long = 0L,
     var authentication: String = "",
     @ColumnInfo(defaultValue = "")
     val webBaseUrl: String = "",
+    @ColumnInfo(defaultValue = "0")
+    val mirrorRotation: Boolean = false,
 ) {
     val intentAddress: String
         get() = "${address.trimEnd('/')}?fingerprint=$fingerprint"
@@ -49,7 +61,9 @@ data class Repository(
         val changed = this.address != address || this.fingerprint != fingerprint
         copy(
             lastModified = if (changed) "" else lastModified,
+            entryLastModified = if (changed) "" else entryLastModified,
             entityTag = if (changed) "" else entityTag,
+            entryEntityTag = if (changed) "" else entryEntityTag,
             address = address,
             fingerprint = fingerprint,
             authentication = authentication,
@@ -59,13 +73,16 @@ data class Repository(
     fun update(
         mirrors: List<String>, name: String, description: String, version: Int,
         lastModified: String, entityTag: String, timestamp: Long, webBaseUrl: String?,
+        entryLastModified: String?, entryEntityTag: String?,
     ): Repository = copy(
         mirrors = mirrors,
         name = name.nullIfEmpty() ?: this.name,
         description = description.nullIfEmpty() ?: this.description,
         version = if (version >= 0) version else this.version,
         lastModified = lastModified,
+        entryLastModified = entryLastModified ?: this.entryLastModified,
         entityTag = entityTag,
+        entryEntityTag = entryEntityTag ?: this.entryEntityTag,
         updated = System.currentTimeMillis(),
         timestamp = timestamp,
         webBaseUrl = webBaseUrl ?: this.webBaseUrl,
@@ -74,7 +91,9 @@ data class Repository(
     fun enable(enabled: Boolean): Repository = copy(
         enabled = enabled,
         lastModified = "",
+        entryLastModified = "",
         entityTag = "",
+        entryEntityTag = "",
     )
 
     fun setAuthentication(username: String?, password: String?) {
@@ -110,6 +129,10 @@ data class Repository(
             }
             ?: Pair(null, null)
 
+    val downloadAddress: String
+        get() = if (!mirrorRotation) address
+        else mirrors.filter { address.contains(".onion/") || !it.contains(".onion/") }.random()
+
     fun toJSON() = Json.encodeToString(this)
 
     companion object {
@@ -134,12 +157,77 @@ data class Repository(
             )
         }
 
+        fun parsePresetReposXML(additionalReposFile: File): List<Repository> = runCatching {
+            val repoItems = mutableListOf<String>()
+            FileInputStream(additionalReposFile).use { input ->
+                val parser: XmlPullParser = Xml.newPullParser()
+                parser.setInput(input, null)
+
+                parser.apply {
+                    var isItem = false
+                    while (next() != XmlPullParser.END_DOCUMENT) {
+                        when (eventType) {
+                            XmlPullParser.START_TAG -> if (name == "item") isItem = true
+                            XmlPullParser.END_TAG   -> isItem = false
+                            XmlPullParser.TEXT      -> if (isItem) repoItems.add(parser.text)
+                        }
+                    }
+                }
+            }
+
+            // additional_repos: each object seems to have 7 items:
+            // name (str), address (str), description (str),
+            // version (int), enabled (0/1), push requests (ignore?), pubkey (hex)
+            return if (repoItems.size % 7 == 0) {
+                repoItems.chunked(7).mapNotNull { itemsSet ->
+                    fromXML(itemsSet)?.let {
+                        Log.w(
+                            TAG,
+                            ("Preset Repositories: Successfully loaded ${it.name}: ${it.address}")
+                        )
+                        it
+                    }
+                }
+            } else {
+                Log.e(
+                    TAG,
+                    ("Preset Repositories: Invalid source $additionalReposFile with false number of items: ${repoItems.size}")
+                )
+                emptyList()
+            }
+        }.fold(
+            onSuccess = { it },
+            onFailure = {
+                Log.e(
+                    TAG,
+                    ("Preset Repositories: Failed parsing preset repositories from $additionalReposFile: ${it.message}")
+                )
+                emptyList()
+            }
+        )
+
+        fun fromXML(xml: List<String>) = runCatching {
+            defaultRepository(
+                name = xml[0],
+                address = xml[1],
+                description = xml[2].replace(Regex("\\s+"), " ").trim(),
+                version = xml[3].toInt(),
+                enabled = xml[4].toInt() > 0 && xml[1].startsWith("http"),
+                fingerprint = xml[6].let {
+                    if (it.length > 32) calculateSHA256(it)
+                    else it
+                },
+                authentication = "",
+            )
+        }.getOrNull()
+
         private fun defaultRepository(
             address: String, name: String, description: String, version: Int,
             enabled: Boolean, fingerprint: String, authentication: String, webBaseUrl: String = "",
         ): Repository = Repository(
             0, address, emptyList(), name, description, version, enabled,
-            fingerprint, "", "", 0L, 0L, authentication, webBaseUrl,
+            fingerprint, "", "", "", "",
+            0L, 0L, authentication, webBaseUrl,
         )
 
         private val F_DROID = defaultRepository(
@@ -934,32 +1022,41 @@ data class Repository(
             "C5E291B5A571F9C8CD9A9799C2C94E02EC9703948893F2CA756D67B94204F904",
             ""
         )
+        private val BRAVE = defaultRepository(
+            "https://brave-browser-apk-release.s3.brave.com/fdroid/repo",
+            "Brave Browser",
+            "The official repository for Brave Browser: A privacy and security-oriented Chromium-based browser for Android.",
+            21,
+            false,
+            "3C60DE135AA19EC949E998469C908F7171885C1E2805F39EB403DDB0F37B4BD2",
+            ""
+        )
 
         val defaultRepositories = listOf(
             F_DROID, IZZY,
             GUARDIAN, ONIONSHARE_NIGHTLY, MICRO_G,
-            CROMITE, IRONFOX,
+            CROMITE, IRONFOX, BRAVE,
             NEWPIPE, BITWARDEN, GITJOURNAL,
-            CALYX_OS, CALYX_OS_TEST,
+            CALYX_OS, CALYX_OS_TEST, IODE,
             KDE_RELEASE, KDE_NIGHTLY, NANODROID, NETSYMS,
-            FEDILAB, NETHUNTER, BEOCODE, INSPORATION,
+            FUTO, KVAESITSO, C_GEO, C_GEO_NIGHTLY, COLLABORA,
             PIXELFED, VIDELIBRI, GADGETBRIDGE,
             THREEMA, SESSION, MOLLY, BRIAR, ANONYMOUS_MESSENGER,
+            FEDILAB, NETHUNTER, BEOCODE, INSPORATION,
             SIMPLEX_CHAT, REVOLT, TWIN_HELIX,
-            PI2P, OFFICIAL_I2P, COLLABORA,
+            PI2P, OFFICIAL_I2P,
             ELEMENT_DEV_FDROID, ELEMENT_DEV_GPLAY,
-            FROSTNERD, F_DROID_CLASSIC,
-            ETOPA, METATRANS_APPS, FUTO, KVAESITSO,
+            F_DROID_CLASSIC,
+            ETOPA, METATRANS_APPS,
             LTTRS, KAFFEEMITKOFFEIN,
             SAUNAREPO, UNOFFICIAL_FIREFOX, PATCHED,
             WIND, UMBRELLA, CRYPTOMATOR,
-            RWTH, TAGESSCHAU, WOZ,
-            C_GEO, C_GEO_NIGHTLY, PETER_CXY,
+            RWTH, TAGESSCHAU, WOZ, PETER_CXY,
             LAGRANGE, ROHIT, LUBLIN, NAILYK, LUBL,
             SYLKEVICIOUS, OBERNBERGER, NUCLEUS,
             XARANTOLUS, TWOBR, OBFUSK, MAXXIS,
             JAK_LINUX, MONERUJO,
-            IODE, SPIRIT_CROC, SPIRIT_CROC_TEST,
+            SPIRIT_CROC, SPIRIT_CROC_TEST,
             ANIYOMI, KOYU, KUSCHKU,
             STACK_WALLET,
             GROBOX, FAIRFAX, ZIMBELSTERN,
@@ -971,7 +1068,6 @@ data class Repository(
         val addedReposV9 = listOf(
             SIMPLEX_CHAT,
             ELEMENT_DEV_FDROID, ELEMENT_DEV_GPLAY,
-            FROSTNERD,
         )
 
         val addedReposV10 = listOf(
@@ -1033,7 +1129,6 @@ data class Repository(
         val archiveRepos = listOf(
             F_DROID_ARCHIVE,
             GUARDIAN_ARCHIVE,
-            FROSTNERD_ARCHIVE,
         )
 
         val removedReposV28 = listOf(
@@ -1054,6 +1149,10 @@ data class Repository(
 
         val removedReposV31 = listOf(
             MOBILSICHER
+        )
+
+        val addedReposV1102 = listOf(
+            BRAVE
         )
     }
 }

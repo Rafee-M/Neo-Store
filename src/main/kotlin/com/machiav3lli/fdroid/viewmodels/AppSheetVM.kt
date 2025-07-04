@@ -6,12 +6,13 @@ import com.machiav3lli.fdroid.NeoApp
 import com.machiav3lli.fdroid.RELEASE_STATE_INSTALLED
 import com.machiav3lli.fdroid.RELEASE_STATE_NONE
 import com.machiav3lli.fdroid.RELEASE_STATE_SUGGESTED
+import com.machiav3lli.fdroid.STATEFLOW_SUBSCRIBE_BUFFER
 import com.machiav3lli.fdroid.data.content.Preferences
-import com.machiav3lli.fdroid.data.database.DatabaseX
 import com.machiav3lli.fdroid.data.database.entity.AntiFeatureDetails
 import com.machiav3lli.fdroid.data.database.entity.CategoryDetails
 import com.machiav3lli.fdroid.data.database.entity.ExodusInfo
 import com.machiav3lli.fdroid.data.database.entity.Extras
+import com.machiav3lli.fdroid.data.database.entity.RBLog
 import com.machiav3lli.fdroid.data.entity.ActionState
 import com.machiav3lli.fdroid.data.entity.PrivacyData
 import com.machiav3lli.fdroid.data.repository.DownloadedRepository
@@ -20,6 +21,7 @@ import com.machiav3lli.fdroid.data.repository.InstalledRepository
 import com.machiav3lli.fdroid.data.repository.PrivacyRepository
 import com.machiav3lli.fdroid.data.repository.ProductsRepository
 import com.machiav3lli.fdroid.data.repository.RepositoriesRepository
+import com.machiav3lli.fdroid.utils.extension.Quadruple
 import com.machiav3lli.fdroid.utils.extension.text.nullIfEmpty
 import com.machiav3lli.fdroid.utils.findSuggestedProduct
 import com.machiav3lli.fdroid.utils.generatePermissionGroups
@@ -43,8 +45,6 @@ import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class AppSheetVM(
-    // TODO
-    private val db: DatabaseX,
     downloadedRepo: DownloadedRepository,
     private val productsRepo: ProductsRepository,
     private val extrasRepo: ExtrasRepository,
@@ -78,8 +78,23 @@ class AppSheetVM(
         .mapLatest { it.maxByOrNull(ExodusInfo::version_code) }
 
     val trackers = combine(exodusInfo, privacyRepo.getAllTrackers()) { info, trackers ->
-        trackers.filter { it.key in (info?.trackers ?: emptyList()) }
+        trackers.filter { it.key in info?.trackers.orEmpty() }
     }
+
+    val rbLogs = packageName
+        .flatMapLatest { pn ->
+            privacyRepo.getRBLogs(pn)
+        }
+        .mapLatest {
+            it
+                .groupBy(RBLog::hash)
+                .mapValues { (_, rbDataList) -> rbDataList.maxByOrNull(RBLog::timestamp)!! }
+        }
+        .stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(STATEFLOW_SUBSCRIBE_BUFFER),
+            emptyMap()
+        )
 
     val repositories = reposRepo.getAll().distinctUntilChanged()
 
@@ -89,7 +104,7 @@ class AppSheetVM(
         }
         .stateIn(
             viewModelScope,
-            SharingStarted.Lazily,
+            SharingStarted.WhileSubscribed(STATEFLOW_SUBSCRIBE_BUFFER),
             null
         )
 
@@ -105,7 +120,7 @@ class AppSheetVM(
         }
     }.stateIn(
         viewModelScope,
-        SharingStarted.Lazily,
+        SharingStarted.WhileSubscribed(STATEFLOW_SUBSCRIBE_BUFFER),
         emptyList()
     )
 
@@ -113,23 +128,24 @@ class AppSheetVM(
         findSuggestedProduct(prodRepos, installed) { it.first }
     }.stateIn(
         viewModelScope,
-        SharingStarted.Lazily,
+        SharingStarted.WhileSubscribed(STATEFLOW_SUBSCRIBE_BUFFER),
         null
     )
 
     val releaseItems = combine(
         suggestedProductRepo,
         repositories,
-        installedItem
-    ) { suggestedProductRepo, repos, installed ->
+        installedItem,
+        rbLogs,
+    ) { suggestedProductRepo, repos, installed, logs ->
         val includeIncompatible = Preferences[Preferences.Key.IncompatibleVersions]
         val reposMap = repos.associateBy { it.id }
 
-        (suggestedProductRepo?.first?.releases ?: emptyList())
+        suggestedProductRepo?.first?.releases.orEmpty()
             .filter { includeIncompatible || it.incompatibilities.isEmpty() }
             .mapNotNull { rel -> reposMap[rel.repositoryId]?.let { Pair(rel, it) } }
             .map { (release, repository) ->
-                Triple(
+                Quadruple(
                     release,
                     repository,
                     when {
@@ -140,7 +156,8 @@ class AppSheetVM(
                              -> RELEASE_STATE_SUGGESTED
 
                         else -> RELEASE_STATE_NONE
-                    }
+                    },
+                    logs[release.hash],
                 )
             }
             .sortedByDescending { it.first.versionCode }
@@ -149,7 +166,7 @@ class AppSheetVM(
         .flowOn(Dispatchers.IO)
         .stateIn(
             viewModelScope,
-            SharingStarted.Lazily,
+            SharingStarted.WhileSubscribed(STATEFLOW_SUBSCRIBE_BUFFER),
             emptyList(),
         )
 
@@ -160,10 +177,10 @@ class AppSheetVM(
         val catsMap = afs.associateBy(AntiFeatureDetails::name)
         prod?.let {
             it.first.product.antiFeatures.map { catsMap[it] ?: AntiFeatureDetails(it, "") }
-        } ?: emptyList()
+        }.orEmpty()
     }.stateIn(
         viewModelScope,
-        SharingStarted.Lazily,
+        SharingStarted.WhileSubscribed(STATEFLOW_SUBSCRIBE_BUFFER),
         emptyList(),
     )
 
@@ -182,8 +199,8 @@ class AppSheetVM(
         )
     }.stateIn(
         viewModelScope,
-        SharingStarted.Lazily,
-        PrivacyData(emptyMap(), emptyList(), emptyList())
+        SharingStarted.WhileSubscribed(STATEFLOW_SUBSCRIBE_BUFFER),
+        PrivacyData()
     )
 
     val privacyNote = privacyData.mapLatest {
@@ -197,10 +214,10 @@ class AppSheetVM(
         val catsMap = cats.associateBy(CategoryDetails::name)
         prod?.let {
             it.first.product.categories.map { catsMap[it]?.label ?: it }
-        } ?: emptyList()
+        }.orEmpty()
     }.stateIn(
         viewModelScope,
-        SharingStarted.Lazily,
+        SharingStarted.WhileSubscribed(STATEFLOW_SUBSCRIBE_BUFFER),
         emptyList(),
     )
 
@@ -208,7 +225,7 @@ class AppSheetVM(
         .mapLatest { it?.state }
         .stateIn(
             viewModelScope,
-            SharingStarted.Lazily,
+            SharingStarted.WhileSubscribed(STATEFLOW_SUBSCRIBE_BUFFER),
             null
         )
 
@@ -218,7 +235,7 @@ class AppSheetVM(
         }
         .stateIn(
             viewModelScope,
-            SharingStarted.Lazily,
+            SharingStarted.WhileSubscribed(STATEFLOW_SUBSCRIBE_BUFFER),
             null
         )
 
@@ -275,14 +292,14 @@ class AppSheetVM(
     val mainAction: StateFlow<ActionState> = actions.map { it.first }
         .stateIn(
             viewModelScope,
-            SharingStarted.Lazily,
+            SharingStarted.WhileSubscribed(STATEFLOW_SUBSCRIBE_BUFFER),
             ActionState.Bookmark
         )
 
     val subActions: StateFlow<Set<ActionState>> = actions.map { it.second }
         .stateIn(
             viewModelScope,
-            SharingStarted.Lazily,
+            SharingStarted.WhileSubscribed(STATEFLOW_SUBSCRIBE_BUFFER),
             emptySet()
         )
 
